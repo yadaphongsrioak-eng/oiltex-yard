@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>OIL-TEX Yard Access</title>
+<meta name="description" content="ระบบลงทะเบียนเข้า–ออกพื้นที่ OIL-TEX Yard สำหรับจุด รปภ.">
+<meta name="theme-color" content="#16364a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+@font-face{font-family:"Plex Thai";font-weight:400;src:url(vendor/fonts/ibm-plex-sans-thai-thai-400-normal.woff2) format("woff2");unicode-range:U+0E00-0E7F}
+@font-face{font-family:"Plex Thai";font-weight:400;src:url(vendor/fonts/ibm-plex-sans-thai-latin-400-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+2000-206F}
+@font-face{font-family:"Plex Thai";font-weight:600;src:url(vendor/fonts/ibm-plex-sans-thai-thai-600-normal.woff2) format("woff2");unicode-range:U+0E00-0E7F}
+@font-face{font-family:"Plex Thai";font-weight:600;src:url(vendor/fonts/ibm-plex-sans-thai-latin-600-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+2000-206F}
+@font-face{font-family:"Bai";font-weight:600;src:url(vendor/fonts/bai-jamjuree-thai-600-normal.woff2) format("woff2");unicode-range:U+0E00-0E7F}
+@font-face{font-family:"Bai";font-weight:600;src:url(vendor/fonts/bai-jamjuree-latin-600-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+2000-206F}
+@font-face{font-family:"Bai";font-weight:700;src:url(vendor/fonts/bai-jamjuree-thai-700-normal.woff2) format("woff2");unicode-range:U+0E00-0E7F}
+@font-face{font-family:"Bai";font-weight:700;src:url(vendor/fonts/bai-jamjuree-latin-700-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+2000-206F}
+/* Layout: one-hand phone app for the gate — sticky clock bar, one view at a time, tab bar at the thumb, full-screen live camera. Brand green + navy from the OIL-TEX quick guide. */
+:root{
+  --bg:#eef3f1; --surface:#ffffff; --surface-2:#f6f9f8; --ink:#11303d; --muted:#5a6e76; --line:#d5e0dc;
+  --brand:#08795a; --brand-ink:#ffffff; --brand-soft:#e3f2ec; --navy:#16364a; --navy-ink:#ffffff;
+  --warn:#9a5a00; --warn-bg:#fff3dc; --bad:#b3261e; --bad-bg:#fde8e6; --ok:#08795a; --ok-bg:#e3f2ec;
+  --plate-bg:#ffffff; --plate-ink:#111111; --shadow:0 1px 2px rgba(17,48,61,.06),0 6px 18px rgba(17,48,61,.06);
+  --f-display:"Bai","Plex Thai","Noto Sans Thai",Tahoma,sans-serif;
+  --f-body:"Plex Thai","Noto Sans Thai",Tahoma,system-ui,sans-serif;
+  --r:12px; --tabh:64px; color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#0c181d; --surface:#132329; --surface-2:#0f1e23; --ink:#e4eef0; --muted:#94a9b0; --line:#25393f;
+  --brand:#2db389; --brand-ink:#04241a; --brand-soft:#123a2f; --navy:#16364a; --navy-ink:#ffffff;
+  --warn:#f2b552; --warn-bg:#36290f; --bad:#ff8f86; --bad-bg:#3a1714; --ok:#4cc79f; --ok-bg:#123a2f;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 18px rgba(0,0,0,.25); color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.5;-webkit-tap-highlight-color:transparent;padding-top:env(safe-area-inset-top,0px)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+h1,h2,h3{font-family:var(--f-display);line-height:1.2;text-wrap:balance;margin:0}
+small{color:var(--muted)}
+.wrap{max-width:720px;margin:0 auto;padding-inline:16px;padding-block:12px calc(var(--tabh) + 28px + env(safe-area-inset-bottom,0px))}
+
+.top{position:sticky;top:0;z-index:20;background:var(--navy);color:var(--navy-ink);display:flex;align-items:center;gap:12px;padding:10px 16px}
+.mark{display:grid;place-items:center;width:38px;height:38px;border-radius:9px;background:#08795a;color:#fff;font-family:var(--f-display);font-weight:700}
+.brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+.brand b{font-family:var(--f-display);font-size:15px;letter-spacing:.08em;display:block}
+.brand small{color:inherit;opacity:.75;font-size:12.5px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.clock{text-align:right;font-variant-numeric:tabular-nums}
+.clock b{font-family:var(--f-display);font-size:22px;display:block;line-height:1}
+.clock small{color:inherit;opacity:.75;font-size:12px}
+.conn{width:10px;height:10px;border-radius:50%;background:#3ddc97;flex:none}
+.conn.off{background:#ffb84d}
+
+.banner{margin:12px 0 0;padding:12px 14px;border-radius:var(--r);background:var(--warn-bg);color:var(--warn);font-size:14.5px}
+.banner b{display:block;color:inherit}
+
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(4,1fr);padding-bottom:env(safe-area-inset-bottom,0px)}
+.tabs button{height:var(--tabh);border:0;background:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:12.5px;color:var(--muted);position:relative}
+.tabs button svg{width:24px;height:24px}
+.tabs button[aria-selected="true"]{color:var(--brand);font-weight:600}
+.tabs .badge{position:absolute;top:8px;left:calc(50% + 6px);min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--brand);color:var(--brand-ink);font-size:12px;line-height:20px;font-weight:600;font-variant-numeric:tabular-nums}
+
+.eyebrow{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.view>header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:8px 0 14px}
+.view>header h1{font-size:24px}
+
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.act{border:0;border-radius:14px;padding:16px 14px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:118px;background:var(--brand);color:var(--brand-ink);box-shadow:var(--shadow)}
+.act svg{width:30px;height:30px}
+.act b{font-family:var(--f-display);font-size:18px;line-height:1.2}
+.act span{font-size:13px;opacity:.85;line-height:1.35}
+.act.alt{background:var(--navy);color:var(--navy-ink)}
+.act.qr{grid-column:1/-1;flex-direction:row;align-items:center;min-height:0;padding:14px;background:var(--surface);color:var(--ink);border:1.5px solid var(--line);box-shadow:none}
+.act.qr svg{width:34px;height:34px;color:var(--brand);flex:none}
+.act.qr div{display:flex;flex-direction:column}
+.act:active{transform:scale(.985)}
+.live-dot{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;letter-spacing:.06em;opacity:.95}
+.live-dot::before{content:"";width:8px;height:8px;border-radius:50%;background:#ff5a4e;box-shadow:0 0 0 3px rgba(255,90,78,.25)}
+.tip{font-size:13.5px;color:var(--muted);margin:10px 2px 0}
+.linkbtn{border:0;background:none;padding:0 2px;color:var(--brand);font-weight:600;text-decoration:underline;text-underline-offset:3px}
+
+.scancard{margin-top:14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;box-shadow:var(--shadow)}
+.scancard .t{font-weight:600}
+.checks{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:14px}
+.checks li{display:flex;gap:6px;align-items:flex-start}
+.checks li::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;margin-top:7px;background:var(--ok)}
+.checks li.w::before{background:var(--warn)} .checks li.x::before{background:var(--bad)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes sp{to{transform:rotate(1turn)}}
+
+.hit{margin-top:14px;border-radius:var(--r);padding:14px;background:var(--warn-bg);color:var(--ink);border:1.5px solid var(--warn);display:flex;flex-direction:column;gap:8px}
+.hit .h{font-weight:600;color:var(--warn)}
+
+.entry{margin-top:18px;background:var(--surface);border-radius:16px;padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:16px}
+.entry h2{font-size:20px;display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.entry h2 small{font-family:var(--f-body);font-size:13px;font-weight:400}
+fieldset{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;min-width:0}
+legend{font-size:12px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--muted);padding:0;margin-bottom:8px}
+label{display:flex;flex-direction:column;gap:4px;font-size:14px;font-weight:500;min-width:0}
+input,select,textarea{width:100%;min-height:48px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface-2);padding:10px 12px;font-size:17px}
+textarea{min-height:110px;resize:vertical;font-size:15px}
+input:focus,select:focus,textarea:focus{border-color:var(--brand);outline:none;background:var(--surface)}
+input.big{font-family:var(--f-display);font-size:24px;font-weight:600;letter-spacing:.02em}
+input.warnf{border-color:var(--warn)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.flash{animation:fl 1.4s ease-out}
+@keyframes fl{0%{box-shadow:0 0 0 4px var(--brand-soft);border-color:var(--brand)}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.flash{animation:none}.spin{animation-duration:3s}}
+.sug{display:flex;flex-wrap:wrap;gap:6px}
+.sug:empty{display:none}
+.sug .lbl{width:100%;font-size:13px;color:var(--muted)}
+.chip{border:1.5px solid var(--line);background:var(--surface-2);border-radius:999px;padding:8px 14px;font-size:14.5px;min-height:40px}
+.chip[aria-pressed="true"]{background:var(--brand);border-color:var(--brand);color:var(--brand-ink);font-weight:600}
+.chip.s{border-style:dashed;text-align:left}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.stepper{display:flex;align-items:center;width:max-content;border:1.5px solid var(--line);border-radius:10px;overflow:hidden}
+.stepper button{width:52px;height:46px;border:0;background:var(--surface-2);font-size:22px}
+.stepper output{min-width:52px;text-align:center;font-family:var(--f-display);font-size:20px;font-weight:600}
+.formerr{padding:10px 12px;border-radius:10px;background:var(--bad-bg);color:var(--bad);font-size:14.5px}
+.formerr.w{background:var(--warn-bg);color:var(--warn)}
+.submitbar{display:grid;grid-template-columns:auto 1fr;gap:10px}
+.primary,.ghost,.danger,.navybtn{border-radius:12px;min-height:54px;padding:0 18px;font-weight:600;font-size:17px;border:0}
+.primary{background:var(--brand);color:var(--brand-ink)}
+.navybtn{background:var(--navy);color:var(--navy-ink)}
+.ghost{background:transparent;border:1.5px solid var(--line);color:var(--ink)}
+.danger{background:var(--ink);color:var(--surface)}
+.danger.arm{background:var(--bad);color:#fff}
+.sm{min-height:42px;font-size:15px;padding:0 14px}
+button:disabled{opacity:.5;cursor:not-allowed}
+
+.plate{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;background:var(--plate-bg);color:var(--plate-ink);border:2.5px solid var(--plate-ink);border-radius:7px;padding:4px 14px 3px;min-width:150px;font-family:var(--f-display);line-height:1.05;box-shadow:inset 0 0 0 2px var(--plate-bg),inset 0 0 0 3px rgba(0,0,0,.25)}
+.plate .n{font-size:30px;font-weight:700;letter-spacing:.03em;white-space:nowrap}
+.plate .p{font-size:13px;font-weight:600}
+.plate.s{min-width:108px;padding:2px 9px;border-width:2px}
+.plate.s .n{font-size:19px}.plate.s .p{font-size:10.5px}
+.plate.blank{color:#8a9599;border-style:dashed}
+.platebox{display:flex;justify-content:center;padding:6px 0}
+
+.sheet{position:fixed;inset:0;z-index:40;background:rgba(8,20,25,.55);display:flex;align-items:flex-end;justify-content:center}
+.sheet>div{background:var(--surface);width:100%;max-width:520px;border-radius:20px 20px 0 0;padding:20px 16px calc(20px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:12px;max-height:92%;overflow:auto}
+.donehead{display:flex;align-items:center;gap:12px}
+.okdot{width:44px;height:44px;border-radius:50%;background:var(--ok-bg);color:var(--ok);display:grid;place-items:center;flex:none}
+.okdot svg{width:26px;height:26px}
+.qrbox{background:#fff;border-radius:12px;padding:12px;display:flex;justify-content:center;border:1px solid var(--line)}
+.qrbox svg{width:min(240px,70vw);height:auto;display:block}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:15px;margin:0}
+.kv dt{color:var(--muted)} .kv dd{margin:0;font-weight:500;min-width:0;overflow-wrap:anywhere}
+
+.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.stat{background:var(--surface);border-radius:var(--r);padding:12px;box-shadow:var(--shadow)}
+.stat b{font-family:var(--f-display);font-size:28px;display:block;line-height:1.1;font-variant-numeric:tabular-nums}
+.stat span{font-size:13px;color:var(--muted)}
+.search{margin-bottom:12px}
+.list{display:flex;flex-direction:column;gap:10px}
+.card{background:var(--surface);border-radius:var(--r);padding:14px;box-shadow:var(--shadow);display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center}
+.card .who{min-width:0}
+.card .who b{display:block;font-size:16.5px}
+.card .who span{display:block;font-size:14px;color:var(--muted);overflow-wrap:anywhere}
+.card .meta{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;font-variant-numeric:tabular-nums}
+.card.long{outline:2px solid var(--warn)}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12.5px;font-weight:600;background:var(--brand-soft);color:var(--brand)}
+.pill.w{background:var(--warn-bg);color:var(--warn)}
+.pill.g{background:var(--surface-2);color:var(--muted)}
+.empty{padding:28px 16px;text-align:center;color:var(--muted);background:var(--surface);border-radius:var(--r);border:1.5px dashed var(--line)}
+.empty b{display:block;color:var(--ink);font-family:var(--f-display);font-size:18px;margin-bottom:4px}
+
+.filters{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.tablewrap{overflow-x:auto;background:var(--surface);border-radius:var(--r);box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:760px}
+th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;letter-spacing:.06em;color:var(--muted);font-weight:600;background:var(--surface-2)}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin:12px 0}
+.panel{background:var(--surface);border-radius:16px;padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px;margin-top:18px}
+.panel h2{font-size:19px}
+.panel p{margin:0;color:var(--muted);font-size:14.5px}
+.steps{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px;font-size:15px}
+.linkline{display:flex;gap:8px;align-items:center}
+.linkline code{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px;background:var(--surface-2);padding:10px;border-radius:8px;border:1px solid var(--line)}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap}
+.btnrow>*{flex:1 1 140px}
+
+#toast{position:fixed;left:50%;bottom:calc(var(--tabh) + 16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:80;background:var(--ink);color:var(--surface);padding:12px 18px;border-radius:12px;font-size:15px;max-width:calc(100% - 32px);box-shadow:var(--shadow)}
+
+/* ---------- live scanner ---------- */
+.scanner{position:fixed;inset:0;z-index:60;background:#000;color:#fff;overflow:hidden}
+.scanner video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.guide{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);border-radius:12px;box-shadow:0 0 0 200vmax rgba(0,0,0,.55);transition:border-color .2s,width .25s,height .25s}
+.guide::after{content:"";position:absolute;inset:0;border:3px solid rgba(255,255,255,.9);border-radius:12px}
+.guide.plate{width:min(80vw,560px);aspect-ratio:2.2/1}
+.guide.id{width:min(90vw,640px);aspect-ratio:1.586/1}
+.guide.passport{width:min(90vw,640px);aspect-ratio:1.42/1}
+.guide.qr{width:min(64vw,360px);aspect-ratio:1/1}
+.guide.locked::after{border-color:#3ddc97;border-width:5px}
+.guide .mrz{position:absolute;left:4%;right:4%;bottom:5%;height:28%;border:2px dashed rgba(255,255,255,.7);border-radius:6px;display:none}
+.guide.passport .mrz{display:block}
+.guide .scanline{position:absolute;left:6%;right:6%;height:2px;background:linear-gradient(90deg,transparent,#3ddc97,transparent);top:10%;animation:scan 1.8s ease-in-out infinite alternate;opacity:.9}
+.guide.locked .scanline{display:none}
+@keyframes scan{to{top:88%}}
+@media (prefers-reduced-motion:reduce){.guide .scanline{animation:none;top:50%}}
+.sc-top{position:absolute;left:0;right:0;top:0;padding:calc(10px + env(safe-area-inset-top,0px)) 12px 10px;display:flex;align-items:center;gap:8px;background:linear-gradient(rgba(0,0,0,.6),transparent)}
+.sc-top .hint{flex:1;text-align:center;font-weight:600;font-size:15px;text-shadow:0 1px 2px #000}
+.scbtn{min-width:48px;height:44px;border-radius:22px;border:0;background:rgba(0,0,0,.45);color:#fff;font-weight:600;padding:0 14px;backdrop-filter:blur(6px)}
+.scbtn[aria-pressed="true"]{background:#f2c94c;color:#111}
+.sc-bottom{position:absolute;left:0;right:0;bottom:0;padding:12px 12px calc(14px + env(safe-area-inset-bottom,0px));background:linear-gradient(transparent,rgba(0,0,0,.75) 30%);display:flex;flex-direction:column;gap:10px}
+.sc-read{background:rgba(0,0,0,.55);border-radius:14px;padding:10px 14px;display:flex;flex-direction:column;gap:6px;backdrop-filter:blur(6px)}
+.sc-read .v{font-family:var(--f-display);font-size:22px;font-weight:700;min-height:30px;letter-spacing:.02em;overflow-wrap:anywhere}
+.sc-read .s{font-size:13px;opacity:.85}
+.meter{height:6px;border-radius:3px;background:rgba(255,255,255,.2);overflow:hidden}
+.meter i{display:block;height:100%;width:0;background:#3ddc97;transition:width .25s}
+.zoomrow{display:flex;align-items:center;gap:10px;font-size:13px}
+.zoomrow input{min-height:0;padding:0;background:none;border:0;accent-color:#3ddc97}
+.modes{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.modes button{border:0;border-radius:10px;min-height:46px;background:rgba(255,255,255,.12);color:#fff;font-size:13.5px;font-weight:600;line-height:1.2;padding:4px}
+.modes button[aria-pressed="true"]{background:#fff;color:#111}
+.lockpanel{background:#fff;color:#11303d;border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.lockpanel .t{font-family:var(--f-display);font-weight:700;font-size:18px;display:flex;align-items:center;gap:8px}
+.lockpanel .t::before{content:"";width:12px;height:12px;border-radius:50%;background:#08795a}
+.lockpanel .warnline{background:#fff3dc;color:#7a4700;border-radius:10px;padding:8px 10px;font-size:14.5px}
+.lockpanel .btnrow button{min-height:50px}
+.lockpanel .ghost{color:#11303d;border-color:#d5e0dc}
+.lockpanel .primary{background:#08795a;color:#fff}
+.lockpanel .danger{background:#b3261e;color:#fff}
+.sc-err{position:absolute;left:16px;right:16px;top:30%;background:rgba(0,0,0,.75);border-radius:14px;padding:16px;text-align:center;font-size:15px}
+
+#poster{display:none}
+@media print{
+  @page{size:A4;margin:12mm}
+  body{background:#fff;padding:0}
+  body>*:not(#poster){display:none!important}
+  #poster{display:flex!important;flex-direction:column;align-items:center;gap:8mm;color:#11303d;font-family:var(--f-body);text-align:center}
+  #poster h1{font-size:28pt}#poster .pq svg{width:120mm;height:120mm}
+  #poster ol{text-align:left;font-size:13pt;line-height:1.6}
+}
+@media (min-width:640px){.actions{grid-template-columns:1fr 1fr 1fr}.act.qr{grid-column:auto;flex-direction:column;align-items:flex-start}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark">OT</span><div><b>OIL-TEX YARD</b><small id="gateLbl">จุด รปภ.</small></div></div>
+  <div class="clock"><b id="clk">--:--</b><small id="dte">เวลาประเทศไทย</small></div>
+  <span id="conn" class="conn" role="img" aria-label="ออนไลน์"></span>
+</header>
+
+<div class="wrap">
+<div id="banner" class="banner" hidden></div>
+
+<section id="v-scan" class="view">
+  <header><div><div class="eyebrow">Security desk</div><h1>สแกน แล้วบันทึกเข้า–ออก</h1></div></header>
+  <div class="actions">
+    <button class="act" data-open="plate" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10.5h5M6 13.5h3M14 10.5h4M15 13.5h3"/></svg>
+      <b>สแกนป้ายทะเบียน</b><span class="live-dot">กล้องสด</span>
+    </button>
+    <button class="act alt" data-open="id" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2"/><circle cx="8.5" cy="11" r="2.2"/><path d="M5.5 16c.6-1.6 1.7-2.4 3-2.4s2.4.8 3 2.4M14 10h4.5M14 13h3"/></svg>
+      <b>สแกนบัตร</b><span>บัตรประชาชน · ใบขับขี่ · พาสปอร์ต</span>
+    </button>
+    <button class="act qr" data-open="qr" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v1M14 20h1M17.5 17.5H21V21h-3.5z"/></svg>
+      <div><b>สแกน QR บัตรผ่าน</b><span>บันทึกออกทันที หรือเข้าซ้ำโดยไม่ต้องกรอก</span></div>
+    </button>
+  </div>
+  <p class="tip">ส่องค้างไว้ให้ป้ายหรือบัตรอยู่ในกรอบ ระบบอ่านต่อเนื่องและล็อกค่าเองเมื่ออ่านตรงกันหลายครั้ง · กล้องใช้ไม่ได้? <button class="linkbtn" type="button" id="photoBtn">ใช้รูปถ่ายแทน</button></p>
+
+  <div id="scanCard" class="scancard" hidden><div class="t" id="scanTitle"></div><ul class="checks" id="scanChecks"></ul></div>
+  <div id="insideHit" class="hit" hidden></div>
+
+  <form id="entry" class="entry" novalidate>
+    <h2>รายการเข้า <small>ตรวจกับป้าย/บัตรจริงก่อนบันทึก</small></h2>
+    <fieldset>
+      <legend>รถ</legend>
+      <div class="platebox" id="platePrev"></div>
+      <div class="grid2">
+        <label for="fPlate">ทะเบียน<input id="fPlate" class="big" placeholder="1กข 1234" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <label for="fProv">จังหวัด<input id="fProv" list="provList" placeholder="เช่น ระยอง" autocomplete="off"></label>
+      </div>
+      <div class="sug" id="plateSug"></div>
+    </fieldset>
+    <fieldset>
+      <legend>ผู้มาติดต่อ / คนขับ</legend>
+      <label for="fName">ชื่อ–นามสกุล<input id="fName" placeholder="ชื่อตามบัตร" autocomplete="off"></label>
+      <div class="sug" id="nameSug"></div>
+      <div class="grid2">
+        <label for="fDoc">เอกสาร<select id="fDoc"><option value="">ไม่ระบุ</option><option>บัตรประชาชน</option><option>ใบขับขี่</option><option>พาสปอร์ต</option><option>บัตรพนักงาน</option><option>อื่น ๆ</option></select></label>
+        <label for="fIdl">เลขท้ายเอกสาร<input id="fIdl" inputmode="numeric" maxlength="4" placeholder="4 หลัก" autocomplete="off"></label>
+      </div>
+      <label for="fCo">บริษัท<input id="fCo" list="coList" placeholder="บริษัทผู้เช่า / ผู้รับเหมา" autocomplete="off"></label>
+      <div><span style="font-size:14px;font-weight:500">จำนวนคน</span>
+        <div class="stepper" style="margin-top:4px"><button type="button" data-step="-1" aria-label="ลดจำนวน">−</button><output id="fPax">1</output><button type="button" data-step="1" aria-label="เพิ่มจำนวน">+</button></div>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>วัตถุประสงค์</legend>
+      <div class="chips" id="purposeChips"></div>
+      <label for="fNote">หมายเหตุ<input id="fNote" placeholder="ถ้ามี เช่น เลขใบส่งของ" autocomplete="off"></label>
+    </fieldset>
+    <div class="formerr" id="formErr" hidden></div>
+    <div class="submitbar">
+      <button type="button" class="ghost" id="btnClear">ล้าง</button>
+      <button type="submit" class="primary" id="btnSave">อนุญาตและบันทึกเข้า</button>
+    </div>
+  </form>
+</section>
+
+<section id="v-inside" class="view" hidden>
+  <header><div><div class="eyebrow">ในพื้นที่ตอนนี้</div><h1>บันทึกออก</h1></div></header>
+  <div class="summary">
+    <div class="stat"><b id="sPeople">0</b><span>คนในพื้นที่</span></div>
+    <div class="stat"><b id="sCars">0</b><span>รถในพื้นที่</span></div>
+    <div class="stat"><b id="sToday">0</b><span>เข้าวันนี้</span></div>
+  </div>
+  <div class="search"><input id="qInside" type="search" placeholder="ค้นหา ทะเบียน ชื่อ หรือบริษัท" autocomplete="off"></div>
+  <div class="list" id="insideList"></div>
+</section>
+
+<section id="v-report" class="view" hidden>
+  <header><div><div class="eyebrow">หลังบ้าน</div><h1>ผลการเข้า–ออก</h1></div></header>
+  <div class="filters">
+    <label for="rFrom">ตั้งแต่<input type="date" id="rFrom"></label>
+    <label for="rTo">ถึง<input type="date" id="rTo"></label>
+  </div>
+  <div class="summary">
+    <div class="stat"><b id="rIn">0</b><span>รายการเข้า</span></div>
+    <div class="stat"><b id="rOut">0</b><span>ออกแล้ว</span></div>
+    <div class="stat"><b id="rStill">0</b><span>ยังไม่ออก</span></div>
+  </div>
+  <div class="search"><input id="qReport" type="search" placeholder="ค้นหา ทะเบียน ชื่อ หรือบริษัท" autocomplete="off"></div>
+  <div class="toolbar"><small id="rNote"></small><button type="button" class="navybtn sm" id="btnCsv">ส่งออก CSV (Excel)</button></div>
+  <div class="tablewrap"><table><thead><tr><th>วันที่</th><th>เข้า</th><th>ออก</th><th>ทะเบียน</th><th>ชื่อ</th><th>บริษัท</th><th>วัตถุประสงค์</th><th>คน</th><th>จุดตรวจ</th></tr></thead><tbody id="rBody"></tbody></table></div>
+</section>
+
+<section id="v-more" class="view" hidden>
+  <header><div><div class="eyebrow">เปิดระบบด้วย QR</div><h1>QR และตั้งค่า</h1></div></header>
+  <div class="panel" style="margin-top:0">
+    <div class="qrbox" id="appQr"></div>
+    <p style="text-align:center">สแกนด้วยกล้องมือถือเพื่อเปิดระบบนี้ในเบราว์เซอร์</p>
+    <div class="linkline"><code id="appLink"></code><button type="button" class="ghost sm" id="btnCopy">คัดลอก</button></div>
+    <div class="btnrow"><button type="button" class="navybtn sm" id="btnPoster">พิมพ์โปสเตอร์ QR</button><button type="button" class="ghost sm" id="btnQrPng">บันทึกรูป QR</button></div>
+    <p id="installHint">เพิ่มไว้ที่หน้าจอหลัก: Chrome กด ⋮ แล้ว "เพิ่มลงในหน้าจอหลัก" · Safari กดปุ่มแชร์ แล้ว "เพิ่มไปยังหน้าจอโฮม"</p>
+  </div>
+
+  <div class="panel">
+    <h2>เครื่องนี้</h2>
+    <label for="gateName">ชื่อจุดตรวจของเครื่องนี้<input id="gateName" placeholder="เช่น ประตู 1 ขาเข้า"></label>
+    <p id="storeInfo">ข้อมูลเก็บในเบราว์เซอร์ของเครื่องนี้</p>
+  </div>
+
+  <div class="panel">
+    <h2>รายชื่อตัวเลือก</h2>
+    <p>หนึ่งรายการต่อบรรทัด ใช้เป็นตัวเลือกให้ รปภ. กดได้เลย</p>
+    <label for="setCo">บริษัทผู้เช่า / ผู้รับเหมา<textarea id="setCo" placeholder="บริษัท ตัวอย่าง จำกัด"></textarea></label>
+    <label for="setPurp">วัตถุประสงค์<textarea id="setPurp"></textarea></label>
+    <button type="button" class="primary sm" id="btnSaveSet">บันทึกรายชื่อ</button>
+  </div>
+
+  <div class="panel">
+    <h2>ส่งข้อมูลขึ้น Google Sheets <small>(ไม่บังคับ)</small></h2>
+    <p>ใส่ลิงก์ Web App จาก Google Apps Script ทุกการเข้า–ออกจะถูกส่งขึ้นชีตอัตโนมัติ ให้หลังบ้านเปิดดูได้จากที่ไหนก็ได้ ถ้าเน็ตหลุดจะเก็บไว้ส่งทีหลัง</p>
+    <label for="syncUrl">ลิงก์ Apps Script<input id="syncUrl" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off" spellcheck="false"></label>
+    <div class="btnrow"><button type="button" class="primary sm" id="btnSyncSave">บันทึกและทดสอบ</button><button type="button" class="ghost sm" id="btnSyncNow">ส่งที่ค้างอยู่ตอนนี้</button></div>
+    <p id="syncInfo">ยังไม่ได้ตั้งค่า</p>
+  </div>
+
+  <div class="panel">
+    <h2>สำรองและย้ายข้อมูล</h2>
+    <p>สำรองข้อมูลเป็นไฟล์ไว้ทุกสัปดาห์ หรือใช้ย้ายข้อมูลไปเครื่องใหม่</p>
+    <div class="btnrow"><button type="button" class="navybtn sm" id="btnBackup">สำรองข้อมูล (.json)</button><button type="button" class="ghost sm" id="btnRestore">นำเข้าไฟล์สำรอง</button></div>
+    <input type="file" id="restoreFile" accept=".json,application/json" hidden>
+    <label for="purgeDays">ลบรายการที่ออกแล้วและเก่ากว่า<select id="purgeDays"><option value="90">90 วัน</option><option value="180" selected>180 วัน</option><option value="365">1 ปี</option></select></label>
+    <button type="button" class="danger sm" id="btnPurge">ลบข้อมูลเก่า</button>
+  </div>
+
+  <div class="panel">
+    <h2>วิธีใช้ที่จุด รปภ.</h2>
+    <ol class="steps">
+      <li>กด <b>สแกนป้ายทะเบียน</b> ส่องกล้องค้างไว้ ระบบล็อกค่าเองเมื่ออ่านตรงกัน แล้วกด <b>สแกนบัตรต่อ</b></li>
+      <li>เทียบกับป้ายและบัตรจริง แก้ช่องที่ขึ้นสีเหลือง เลือกบริษัทและวัตถุประสงค์</li>
+      <li>กด <b>อนุญาตและบันทึกเข้า</b> ให้ผู้มาติดต่อถ่ายรูป QR บัตรผ่านเก็บไว้</li>
+      <li>ตอนออก สแกน QR บัตรผ่าน หรือสแกนป้ายเดิม แล้วกด <b>บันทึกออก</b></li>
+    </ol>
+  </div>
+</section>
+</div>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-v="scan" aria-selected="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M7 12h10"/></svg>สแกน</button>
+  <button role="tab" data-v="inside" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4H5.5A1.5 1.5 0 0 0 4 5.5v13A1.5 1.5 0 0 0 5.5 20H10M15 8l4 4-4 4M19 12H9"/></svg>ในพื้นที่<span class="badge" id="badge" hidden>0</span></button>
+  <button role="tab" data-v="report" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>รายงาน</button>
+  <button role="tab" data-v="more" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM17.5 17.5H21V21h-3.5z"/></svg>QR/ตั้งค่า</button>
+</nav>
+
+<!-- live scanner -->
+<div id="scanner" class="scanner" hidden role="dialog" aria-modal="true" aria-label="สแกนด้วยกล้อง">
+  <video id="cam" playsinline muted autoplay></video>
+  <div id="guide" class="guide plate"><div class="mrz"></div><div class="scanline"></div></div>
+  <div class="sc-top">
+    <button type="button" class="scbtn" id="scClose" aria-label="ปิดกล้อง">ปิด</button>
+    <div class="hint" id="scHint">วางป้ายให้อยู่ในกรอบ</div>
+    <button type="button" class="scbtn" id="scTorch" aria-pressed="false" hidden>ไฟ</button>
+  </div>
+  <div id="scErr" class="sc-err" hidden></div>
+  <div class="sc-bottom">
+    <div class="sc-read" id="scRead">
+      <div class="v" id="scLive">กำลังเปิดกล้อง…</div>
+      <div class="meter"><i id="scMeter"></i></div>
+      <div class="s" id="scSub">ถือนิ่ง ๆ ห่างพอให้ป้ายเต็มกรอบ</div>
+      <div class="zoomrow" id="zoomRow" hidden><span>ซูม</span><input type="range" id="scZoom" aria-label="ซูม"><span id="zoomVal">1×</span></div>
+    </div>
+    <div class="lockpanel" id="lockPanel" hidden></div>
+    <div class="modes" id="modes">
+      <button type="button" data-mode="plate">ป้าย<br>ทะเบียน</button>
+      <button type="button" data-mode="id">บัตร ปชช.<br>ใบขับขี่</button>
+      <button type="button" data-mode="passport">พาส<br>ปอร์ต</button>
+      <button type="button" data-mode="qr">QR<br>บัตรผ่าน</button>
+    </div>
+  </div>
+</div>
+
+<div id="doneSheet" class="sheet" hidden><div role="dialog" aria-modal="true" aria-labelledby="doneT">
+  <div class="donehead"><span class="okdot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+    <div><h2 id="doneT">บันทึกเข้าแล้ว</h2><small id="doneTime"></small></div></div>
+  <dl class="kv" id="doneKv"></dl>
+  <div class="qrbox" id="passQr"></div>
+  <p style="margin:0;font-size:14.5px;color:var(--muted);text-align:center">บัตรผ่านด่วน: ให้ผู้มาติดต่อถ่ายรูป QR นี้เก็บไว้ ใช้สแกนตอนออก และตอนเข้าครั้งหน้า</p>
+  <button type="button" class="primary" id="btnNext">รายการถัดไป</button>
+</div></div>
+
+<div id="photoSheet" class="sheet" hidden><div role="dialog" aria-modal="true" aria-labelledby="photoT">
+  <h2 id="photoT">อ่านจากรูปถ่าย</h2>
+  <p style="margin:0;color:var(--muted);font-size:14.5px">ใช้เมื่อเปิดกล้องสดไม่ได้ ถ่ายให้ป้ายหรือบัตรเต็มภาพ</p>
+  <div class="btnrow">
+    <button type="button" class="primary sm" data-photo="plate">ป้ายทะเบียน</button>
+    <button type="button" class="navybtn sm" data-photo="id">บัตร ปชช./ใบขับขี่</button>
+    <button type="button" class="ghost sm" data-photo="passport">พาสปอร์ต</button>
+    <button type="button" class="ghost sm" data-photo="qr">QR บัตรผ่าน</button>
+  </div>
+  <button type="button" class="ghost" id="photoClose">ปิด</button>
+</div></div>
+<input type="file" id="photoFile" accept="image/*" capture="environment" hidden>
+
+<div id="poster" aria-hidden="true">
+  <div style="font:700 14pt var(--f-display);letter-spacing:.12em;color:#08795a">OIL-TEX YARD · ACCESS CONTROL</div>
+  <h1>สแกนเพื่อเปิดระบบลงทะเบียนเข้า–ออก</h1>
+  <div class="pq" id="posterQr"></div>
+  <div id="posterLink" style="font-size:10pt;color:#5a6e76;word-break:break-all"></div>
+  <ol>
+    <li>กด สแกนป้ายทะเบียน ส่องกล้องค้างไว้ ระบบล็อกค่าเอง</li>
+    <li>สแกนบัตรต่อ ตรวจกับของจริง เลือกบริษัทและวัตถุประสงค์</li>
+    <li>กด อนุญาตและบันทึกเข้า ให้ผู้มาติดต่อถ่ายรูป QR บัตรผ่านไว้</li>
+    <li>ตอนออก สแกน QR บัตรผ่าน หรือสแกนป้ายเดิม แล้วกด บันทึกออก</li>
+  </ol>
+</div>
+
+<datalist id="provList"></datalist>
+<datalist id="coList"></datalist>
+<div id="toast" hidden></div>
+
+<script src="vendor/tesseract.min.js"></script>
+<script src="vendor/jsQR.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script src="ocr.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
