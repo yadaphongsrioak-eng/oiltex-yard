@@ -25,6 +25,11 @@ function dur(fromIso, toIso) {
 function h32(str, seed) { let h = seed >>> 0; for (const ch of str) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
 const keyOf = s => "k" + h32(s, 2166136261) + h32(s, 0x9747b28c);
 const newId = () => "v" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+// one-way fingerprint of a 13-digit ID: lets a returning visitor be recognised without storing the number
+async function idHash(id) {
+  try { const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("oiltex-yard:" + id)); return Array.from(new Uint8Array(b).slice(0, 12), x => x.toString(16).padStart(2, "0")).join(""); }
+  catch { return ""; }
+}
 const normName = s => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
 const plateKey = (plate, prov) => normPlate(plate) + "|" + normProv(prov);
 const modeOf = arr => { const m = new Map(); let best = null, bc = 0; for (const x of arr) { const c = (m.get(x) || 0) + 1; m.set(x, c); if (c > bc) { bc = c; best = x; } } return best; };
@@ -38,11 +43,14 @@ function download(name, data, type) {
 const DB = (() => {
   let dbp;
   const open = () => dbp || (dbp = new Promise((res, rej) => {
-    const r = indexedDB.open("oiltex-yard", 1);
+    const r = indexedDB.open("oiltex-yard", 2);
     r.onupgradeneeded = () => {
-      const d = r.result;
-      const v = d.createObjectStore("visits", {keyPath: "id"}); v.createIndex("status", "status"); v.createIndex("day", "day");
-      d.createObjectStore("vehicles", {keyPath: "key"}); d.createObjectStore("people", {keyPath: "key"}); d.createObjectStore("meta", {keyPath: "k"});
+      const d = r.result, has = n => d.objectStoreNames.contains(n);
+      if (!has("visits")) { const v = d.createObjectStore("visits", {keyPath: "id"}); v.createIndex("status", "status"); v.createIndex("day", "day"); }
+      if (!has("vehicles")) d.createObjectStore("vehicles", {keyPath: "key"});
+      if (!has("people")) d.createObjectStore("people", {keyPath: "key"});
+      if (!has("meta")) d.createObjectStore("meta", {keyPath: "k"});
+      if (!has("registry")) d.createObjectStore("registry", {keyPath: "key"});
     };
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   }));
@@ -57,13 +65,14 @@ const DB = (() => {
     byIndex: async (n, idx, q) => req((await store(n)).index(idx).getAll(q)),
     get: async (n, k) => req((await store(n)).get(k)),
     put: (n, v) => write(n, s => s.put(v)),
+    clear: n => write(n, s => s.clear()),
     putMany: (n, vs) => write(n, s => vs.forEach(v => s.put(v))),
     delMany: (n, ks) => write(n, s => ks.forEach(k => s.delete(k)))
   };
 })();
 
 /* ---------- state ---------- */
-const S = {inside: [], vehicles: [], people: [], settings: {companies: [], purposes: DEFAULT_PURPOSES}, todayKey: dayKey(), todayCount: 0,
+const S = {idHash: "", inside: [], vehicles: [], people: [], registry: [], settings: {companies: [], purposes: DEFAULT_PURPOSES}, todayKey: dayKey(), todayCount: 0,
   purpose: DEFAULT_PURPOSES[0], pax: 1, src: {plate: "manual", person: "manual"}, warnAck: "", report: []};
 
 let toastT;
@@ -103,7 +112,7 @@ document.addEventListener("click", keepAwake, {once: true});
 $("#provList").innerHTML = PROVINCES.map(p => `<option value="${esc(p)}">`).join("");
 function fillCompanyList() {
   const set = new Set(S.settings.companies);
-  S.people.forEach(p => p.company && set.add(p.company)); S.vehicles.forEach(v => v.company && set.add(v.company));
+  S.people.forEach(p => p.company && set.add(p.company)); S.vehicles.forEach(v => v.company && set.add(v.company)); S.registry.forEach(v => v.company && set.add(v.company));
   $("#coList").innerHTML = [...set].sort((a, b) => a.localeCompare(b, "th")).map(c => `<option value="${esc(c)}">`).join("");
 }
 
@@ -200,7 +209,7 @@ function bindExitButtons(root, after) {
 function clearForm() {
   ["#fPlate", "#fProv", "#fName", "#fIdl", "#fCo", "#fNote"].forEach(id => { $(id).value = ""; $(id).classList.remove("warnf"); });
   $("#fDoc").value = ""; S.pax = 1; $("#fPax").textContent = "1"; S.purpose = S.settings.purposes[0];
-  S.src = {plate: "manual", person: "manual"}; S.warnAck = "";
+  S.src = {plate: "manual", person: "manual"}; S.warnAck = ""; S.idHash = "";
   renderPurposes(); renderPlatePreview(); renderSuggestions();
   $("#formErr").hidden = true; $("#scanCard").hidden = true;
 }
@@ -236,7 +245,12 @@ $("#entry").addEventListener("submit", async ev => {
     await DB.put("visits", visit);
     S.inside.unshift(visit); S.todayCount++;
     if (vKey) { const veh = {key: vKey, plate, prov: provV, company, driver: name, lastSeen: visit.inAt}; await DB.put("vehicles", veh); upsertLocal(S.vehicles, veh); }
-    if (pKey) { const per = {key: pKey, name, company, doc: visit.doc, idLast4: visit.idLast4, vKey, lastSeen: visit.inAt}; await DB.put("people", per); upsertLocal(S.people, per); }
+    if (pKey) {
+      const prev = S.people.find(p => p.key === pKey) || {};
+      const per = {key: pKey, name, company, doc: visit.doc, idLast4: visit.idLast4, vKey, lastSeen: visit.inAt, idHash: S.idHash || prev.idHash || ""};
+      if (per.idHash) for (const o of S.people.filter(p => p.idHash === per.idHash && p.key !== pKey)) { o.idHash = ""; await DB.put("people", o); } // name corrected by the guard: the newest wins
+      await DB.put("people", per); upsertLocal(S.people, per);
+    }
     fillCompanyList(); renderBadge(); renderInside(); enqueue(id);
     showDone(visit); clearForm();
   } catch (e) { console.error(e); formError("บันทึกไม่สำเร็จ พื้นที่เก็บข้อมูลของเบราว์เซอร์อาจเต็ม ลองสำรองแล้วลบข้อมูลเก่า"); }
@@ -349,7 +363,7 @@ async function renderStoreInfo() {
 
 /* ---------- backup / restore / purge ---------- */
 $("#btnBackup").onclick = async () => {
-  const data = {app: "oiltex-yard", version: 1, exportedAt: new Date().toISOString(), visits: await DB.all("visits"), vehicles: await DB.all("vehicles"), people: await DB.all("people"), settings: S.settings};
+  const data = {app: "oiltex-yard", version: 1, exportedAt: new Date().toISOString(), visits: await DB.all("visits"), vehicles: await DB.all("vehicles"), people: await DB.all("people"), registry: await DB.all("registry"), settings: S.settings};
   download(`oiltex-yard-backup_${dayKey()}.json`, JSON.stringify(data), "application/json");
 };
 $("#btnRestore").onclick = () => { $("#restoreFile").value = ""; $("#restoreFile").click(); };
@@ -358,7 +372,7 @@ $("#restoreFile").addEventListener("change", async e => {
   try {
     const d = JSON.parse(await f.text());
     if (d.app !== "oiltex-yard" || !Array.isArray(d.visits)) throw new Error("bad");
-    await DB.putMany("visits", d.visits); await DB.putMany("vehicles", d.vehicles || []); await DB.putMany("people", d.people || []);
+    await DB.putMany("visits", d.visits); await DB.putMany("vehicles", d.vehicles || []); await DB.putMany("people", d.people || []); await DB.putMany("registry", d.registry || []);
     if (d.settings) await DB.put("meta", {k: "settings", ...d.settings});
     await loadAll(); toast(`นำเข้าแล้ว ${d.visits.length} รายการ`);
   } catch { toast("ไฟล์นี้ไม่ใช่ไฟล์สำรองของ OIL-TEX Yard"); }
@@ -372,6 +386,74 @@ $("#btnPurge").onclick = async () => {
   const old = (await DB.byIndex("visits", "day", IDBKeyRange.upperBound(cut, true))).filter(v => v.status === "out");
   await DB.delMany("visits", old.map(v => v.id)); toast(`ลบแล้ว ${old.length} รายการ`); renderStoreInfo();
 };
+
+/* ---------- registered vehicles: back-office list ---------- */
+const regKey = (plate, prov) => keyOf(plateKey(plate, prov));
+function parseRegistry(text) {
+  const rows = [], bad = [];
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.trim(); if (!line) continue;
+    const cols = (line.includes("\t") ? line.split("\t") : line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)).map(c => c.replace(/^"|"$/g, "").trim());
+    if (/ทะเบียน|plate/i.test(cols[0]) && !/\d/.test(cols[0])) continue;   // header row
+    let plate = cols[0] || "", rest = cols.slice(1);
+    // "1กข 1234 ระยอง" in one cell: the province moves out and the other columns shift left
+    const m = plate.match(/^(.*?\d)\s+([ก-๛ .]+)$/);
+    if (m) { plate = m[1]; rest = [m[2]].concat(rest); }
+    const p = parsePlate(plate);
+    if (!p.ok) { bad.push(line); continue; }
+    const prov = rest[0] || "", pv = prov ? snapProvince(prov) : {value: ""};
+    rows.push({key: regKey(p.display, pv.value), plate: p.display, prov: pv.value || prov, company: rest[1] || "", driver: rest[2] || "", note: rest[3] || "", src: "import", at: new Date().toISOString()});
+  }
+  return {rows, bad};
+}
+async function addRegistry(rows, replaceFrom) {
+  if (replaceFrom) { const old = S.registry.filter(r => r.src === replaceFrom).map(r => r.key); if (old.length) await DB.delMany("registry", old); }
+  await DB.putMany("registry", rows);
+  S.registry = await DB.all("registry"); renderRegistry(); fillCompanyList();
+}
+function renderRegistry() {
+  const q = normPlate($("#regQ").value), qn = normName($("#regQ").value);
+  const list = S.registry.filter(r => !q || normPlate(r.plate).includes(q) || normName(r.company).includes(qn)).sort((a, b) => normPlate(a.plate).localeCompare(normPlate(b.plate), "th"));
+  const src = {sheet: "Google Sheets", import: "นำเข้า", manual: "เพิ่มเอง"};
+  $("#regInfo").textContent = S.registry.length ? `${S.registry.length.toLocaleString("th-TH")} คัน · สแกนเจอรถในรายการนี้จะล็อกได้ทันที` : "ยังไม่มีรายการ ระบบจะใช้รถที่เคยเข้าเป็นตัวช่วยแทน";
+  $("#regList").innerHTML = list.slice(0, 60).map(r => `<div class="regrow">${plateHTML(r.plate, r.prov, true)}<div class="who"><b>${esc(r.company || "ไม่ระบุบริษัท")}</b><span>${esc([r.driver, src[r.src] || ""].filter(Boolean).join(" · "))}</span></div><button type="button" class="ghost sm" data-regdel="${esc(r.key)}" aria-label="ลบ ${esc(r.plate)}">ลบ</button></div>`).join("") + (list.length > 60 ? `<p>แสดง 60 จาก ${list.length} คัน ค้นหาเพื่อดูคันอื่น</p>` : "");
+  $$("#regList [data-regdel]").forEach(b => b.onclick = async () => { await DB.delMany("registry", [b.dataset.regdel]); S.registry = S.registry.filter(r => r.key !== b.dataset.regdel); renderRegistry(); });
+}
+$("#regQ").addEventListener("input", renderRegistry);
+$("#btnRegAdd").onclick = async () => {
+  const {rows, bad} = parseRegistry($("#regPaste").value);
+  if (!rows.length) { toast(bad.length ? "อ่านเลขทะเบียนไม่ได้ ตรวจรูปแบบ เช่น 70-1234 หรือ 1กข 1234" : "วางรายการก่อน"); return; }
+  await addRegistry(rows); $("#regPaste").value = "";
+  toast(`เพิ่ม ${rows.length} คัน${bad.length ? ` · ข้าม ${bad.length} แถวที่อ่านทะเบียนไม่ได้` : ""}`);
+};
+$("#btnRegCsv").onclick = () => {
+  const q = s => `"${String(s ?? "").replace(/"/g, '""')}"`;
+  const lines = S.registry.map(r => [r.plate, r.prov, r.company, r.driver, r.note].map(q).join(","));
+  download("oiltex-registered-vehicles.csv", "\uFEFF" + ["ทะเบียน", "จังหวัด", "บริษัท", "คนขับ", "หมายเหตุ"].map(q).join(",") + "\n" + lines.join("\n"), "text/csv;charset=utf-8");
+};
+let regClearArm = 0;
+$("#btnRegClear").onclick = async () => {
+  const b = $("#btnRegClear");
+  if (Date.now() - regClearArm > 4000) { regClearArm = Date.now(); b.textContent = "แตะอีกครั้งเพื่อล้างรายการรถทั้งหมด"; b.classList.add("arm"); setTimeout(() => { b.textContent = "ล้างรายการ"; b.classList.remove("arm"); }, 4000); return; }
+  regClearArm = 0; b.textContent = "ล้างรายการ"; b.classList.remove("arm");
+  await DB.clear("registry"); S.registry = []; renderRegistry(); toast("ล้างรายการรถแล้ว");
+};
+async function pullRegistry(manual) {
+  if (!SYNC.url || !navigator.onLine) { if (manual) toast(SYNC.url ? "ออฟไลน์อยู่ ลองใหม่เมื่อมีเน็ต" : "ตั้งค่าลิงก์ Google Sheets ด้านล่างก่อน"); return; }
+  try {
+    const res = await fetch(SYNC.url + (SYNC.url.includes("?") ? "&" : "?") + "action=registry", {redirect: "follow"});
+    const j = await res.json();
+    if (!j.ok || !Array.isArray(j.rows)) throw new Error(j.error || "bad");
+    const {rows} = parseRegistry(j.rows.map(r => [r.plate, r.prov, r.company, r.driver, r.note].map(v => String(v ?? "").replace(/[\t\n]/g, " ")).join("\t")).join("\n"));
+    rows.forEach(r => r.src = "sheet");
+    await addRegistry(rows, "sheet");
+    lsSet("oiltex.regPulled", new Date().toISOString());
+    $("#regPullInfo").textContent = `ดึงจาก Google Sheets ล่าสุด ${tOf(new Date().toISOString())} น. · ${rows.length} คัน`;
+    if (manual) toast(`อัปเดตรายการรถจากหลังบ้านแล้ว ${rows.length} คัน`);
+  } catch (e) { if (manual) toast("ดึงรายการไม่สำเร็จ ตรวจว่าอัปเดตโค้ด Apps Script เป็นเวอร์ชันใหม่แล้ว"); }
+}
+$("#btnRegPull").onclick = () => pullRegistry(true);
+setInterval(() => pullRegistry(false), 10 * 60 * 1000);
 
 /* ---------- Google Sheets sync (optional) ---------- */
 const SYNC = {url: "", queue: [], last: null, err: "", busy: false};
@@ -446,18 +528,32 @@ $("#btnQrPng").onclick = () => {
   c.toBlob(b => download("OIL-TEX-Yard-QR.png", b), "image/png");
 };
 
+/* ---------- registered vehicles (back office) ---------- */
+// Plates the reader may snap to: the back-office list first, then vehicles that entered before.
+function knownPlates() {
+  const seen = new Set(), out = [];
+  for (const r of S.registry) { const k = normPlate(r.plate); if (!k || seen.has(k + "|" + normProv(r.prov))) continue; seen.add(k + "|" + normProv(r.prov)); out.push({...r, from: "registry"}); }
+  for (const v of S.vehicles) { const k = normPlate(v.plate); if (!k || seen.has(k + "|" + normProv(v.prov))) continue; seen.add(k + "|" + normProv(v.prov)); out.push({plate: v.plate, prov: v.prov, company: v.company, driver: v.driver, from: "history"}); }
+  return out;
+}
+const regFind = (plate, prov) => S.registry.find(r => normPlate(r.plate) === normPlate(plate) && (!prov || !r.prov || normProv(r.prov) === normProv(prov))) || null;
+
 /* ---------- applying scan results to the form ---------- */
 function applyPlate(lock) {
   const prov = lock.prov ? snapProvince(lock.prov) : {value: "", ok: false};
   $("#fPlate").value = lock.plate; flash($("#fPlate"));
   $("#fProv").value = prov.value; if (prov.value) flash($("#fProv"));
-  $("#fPlate").classList.toggle("warnf", !parsePlate(lock.plate).ok);
-  $("#fProv").classList.toggle("warnf", !prov.value);
+  $("#fPlate").classList.toggle("warnf", !parsePlate(lock.plate).ok || !!(lock.unsure && lock.unsure.length));
+  $("#fProv").classList.toggle("warnf", !prov.value || (lock.provConf != null && lock.provConf < 0.6 && !lock.reg));
   S.src.plate = lock.src || "scan";
-  const checks = [["", lock.votes > 1 ? `อ่านตรงกัน ${lock.votes} ครั้งจากกล้องสด` : "อ่านจากรูปถ่าย"], parsePlate(lock.plate).ok ? ["", "รูปแบบทะเบียนถูกต้อง"] : ["w", "รูปแบบทะเบียนไม่ตรงมาตรฐาน ตรวจกับป้ายจริง"],
-    prov.value ? ["", `จังหวัด ${prov.value}`] : ["w", "อ่านจังหวัดไม่ได้ เลือกเองจากรายการ"]];
-  const known = S.vehicles.find(v => normPlate(v.plate) === normPlate(lock.plate));
-  if (known) { checks.push(["", `รถเคยเข้า${known.company ? ": " + known.company : ""}`]); if (!$("#fCo").value && known.company) setField("#fCo", known.company); if (!prov.value && known.prov) { $("#fProv").value = known.prov; $("#fProv").classList.remove("warnf"); } }
+  const checks = [];
+  if (lock.reg) checks.push(["", `ตรงกับรถ${lock.reg.from === "registry" ? "ที่ลงทะเบียนในหลังบ้าน" : "ที่เคยเข้า"}${lock.reg.company ? ": " + lock.reg.company : ""}`]);
+  else checks.push(lock.votes > 1 ? ["", `อ่านตรงกัน ${lock.votes} ภาพจากกล้องสด`] : ["", "อ่านจากรูปถ่าย"]);
+  if (lock.unsure && lock.unsure.length) checks.push(["w", "ตัวที่ขีดเส้นใต้ยังไม่ชัด ตรวจกับป้ายจริง"]);
+  checks.push(parsePlate(lock.plate).ok ? ["", "รูปแบบทะเบียนถูกต้อง"] : ["w", "รูปแบบทะเบียนไม่ตรงมาตรฐาน ตรวจกับป้ายจริง"]);
+  checks.push(prov.value ? [lock.provConf != null && lock.provConf < 0.6 && !lock.reg ? "w" : "", `จังหวัด ${prov.value}${lock.provConf != null && lock.provConf < 0.6 && !lock.reg ? " (ไม่แน่ใจ)" : ""}`] : ["w", "อ่านจังหวัดไม่ได้ เลือกเองจากรายการ"]);
+  const src = lock.reg || S.vehicles.find(v => normPlate(v.plate) === normPlate(lock.plate));
+  if (src) { if (!$("#fCo").value && src.company) setField("#fCo", src.company); if (!$("#fName").value && src.driver) setField("#fName", src.driver); }
   renderPlatePreview(); renderSuggestions();
   scanSummary("อ่านป้ายทะเบียนแล้ว", checks);
 }
@@ -467,8 +563,11 @@ function applyPersonLock(lock) {
   $("#fDoc").value = lock.doc; if (lock.last4) { $("#fIdl").value = lock.last4; flash($("#fIdl")); }
   S.src.person = lock.src || "scan";
   if (lock.doc === "พาสปอร์ต") checks.unshift(["", "เลขพาสปอร์ตผ่านการตรวจ MRZ"]);
-  else checks.unshift(["", `เลขบัตร 13 หลักผ่านการตรวจ${lock.votes > 1 ? ` (ตรงกัน ${lock.votes} ครั้ง)` : ""}`]);
+  else checks.unshift(["", `เลขบัตร 13 หลักผ่านการตรวจเลข${lock.votes > 1 ? ` (อ่าน ${lock.votes} ภาพ)` : ""}`]);
   if (lock.name && lock.nameLang === "en") checks.push(["w", "ใช้ชื่อภาษาอังกฤษจากบัตร แก้เป็นภาษาไทยได้"]);
+  if (lock.nameLang === "known") checks.push(["", "ชื่อจากการยืนยันครั้งก่อน (จำจากเลขบัตร)"]);
+  else if (lock.name && lock.doc === "บัตรประชาชน") checks.push(["w", "ตรวจชื่อกับบัตรจริง แก้ได้ในช่องชื่อ"]);
+  if (lock.company && !$("#fCo").value) setField("#fCo", lock.company);
   checks.push(["", "เก็บเฉพาะเลขท้าย 4 หลัก ตาม PDPA"]);
   const known = lock.name && S.people.find(p => normName(p.name) === normName(lock.name));
   if (known) { checks.push(["", `เคยมาแล้ว${known.company ? ": " + known.company : ""}`]); if (!$("#fCo").value && known.company) setField("#fCo", known.company); }
@@ -496,15 +595,16 @@ function handleQrText(text) {
 
 /* ---------- live scanner ---------- */
 const video = $("#cam"), guide = $("#guide");
-const SC = {stream: null, track: null, mode: "plate", gen: 0, pass: 0, hist: [], provWait: 0, idv: null, locked: null, audio: null, ready: {}};
+const SC = {stream: null, track: null, mode: "plate", gen: 0, pass: 0, locked: null, audio: null, ready: {}, pf: null, idf: null, lastId: null, t0: 0, ms: []};
 const HINT = {plate: "วางป้ายทะเบียนให้อยู่ในกรอบ", id: "วางด้านหน้าบัตรให้เต็มกรอบ", passport: "ให้แถบตัวอักษร 2 บรรทัดล่างอยู่ในกรอบเส้นประ", qr: "ส่อง QR บัตรผ่านให้อยู่ในกรอบ"};
-const SUB = {plate: "ถือนิ่ง ๆ ให้ป้ายเต็มกรอบ ใช้ซูมถ้ารถอยู่ไกล · กลางคืนเปิดไฟ", id: "วางบัตรบนพื้นเรียบ เอียงเล็กน้อยหลบแสงสะท้อน", passport: "เปิดหน้าที่มีรูป วางให้เรียบ", qr: "ห่างประมาณ 1 คืบ ลดความสว่างจอที่แสดง QR ถ้าจ้าเกิน"};
-const LANGS = {plate: ["tha"], id: ["eng", "tha"], passport: ["eng"], qr: []};
+const SUB = {plate: "ให้ป้ายเต็มกรอบ ถือนิ่ง ๆ · รถอยู่ไกลใช้ซูม · กลางคืนเปิดไฟ", id: "วางบัตรบนพื้นเรียบ ให้บัตรเต็มกรอบ เอียงเล็กน้อยหลบแสงสะท้อน", passport: "เปิดหน้าที่มีรูป วางให้เรียบ", qr: "ห่างประมาณ 1 คืบ ลดความสว่างจอที่แสดง QR ถ้าจ้าเกิน"};
+const PLATE_GIVEUP_MS = 4500;
 let barcodeDetector = null;
 try { if ("BarcodeDetector" in window) barcodeDetector = new BarcodeDetector({formats: ["qr_code"]}); } catch {}
 
-function live(v, sub, frac) {
-  $("#scLive").textContent = v; if (sub != null) $("#scSub").textContent = sub;
+function live(v, sub, frac, html) {
+  if (html) $("#scLive").innerHTML = v; else $("#scLive").textContent = v;
+  if (sub != null) $("#scSub").textContent = sub;
   if (frac != null) $("#scMeter").style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + "%";
 }
 function ensureAudio() { try { if (!SC.audio) SC.audio = new (window.AudioContext || window.webkitAudioContext)(); if (SC.audio.state === "suspended") SC.audio.resume(); } catch {} }
@@ -512,7 +612,7 @@ function beep() {
   try { const a = SC.audio, o = a.createOscillator(), g = a.createGain(); o.frequency.value = 1046; g.gain.setValueAtTime(0.0001, a.currentTime); g.gain.exponentialRampToValueAtTime(0.35, a.currentTime + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + 0.16); o.connect(g).connect(a.destination); o.start(); o.stop(a.currentTime + 0.18); } catch {}
   try { navigator.vibrate && navigator.vibrate(90); } catch {}
 }
-function warm(mode) { for (const l of LANGS[mode]) OCR.worker(l).then(() => SC.ready[l] = true).catch(() => {}); }
+function warmTess(langs) { for (const l of langs) OCR.worker(l).then(() => SC.ready[l] = true).catch(() => {}); }
 
 $$("[data-open]").forEach(b => b.onclick = () => openScanner(b.dataset.open));
 $$("#modes button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
@@ -525,13 +625,14 @@ async function openScanner(mode) {
 }
 function closeScanner() { SC.gen++; stopCam(); $("#scanner").hidden = true; document.body.style.overflow = ""; $("#scTorch").setAttribute("aria-pressed", "false"); }
 function setMode(m) {
-  SC.mode = m; SC.gen++; SC.pass = 0; SC.hist = []; SC.provWait = 0; SC.idv = {ids: [], en: [], th: []}; SC.locked = null;
-  guide.className = "guide " + m;
+  SC.mode = m; SC.gen++; SC.pass = 0; SC.locked = null; SC.lastId = null; SC.t0 = performance.now(); SC.ms = [];
+  SC.pf = new Reader.PlateFusion(knownPlates()); SC.idf = new Reader.IdFusion();
+  guide.className = "guide m-" + m;
   $("#scHint").textContent = HINT[m];
   $$("#modes button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
   $("#lockPanel").hidden = true; $("#scRead").hidden = false; $("#modes").hidden = false;
   live(m === "qr" ? "กำลังหา QR…" : "กำลังอ่าน…", SUB[m], 0);
-  warm(m);
+  if (m === "id") warmTess(["tha", "eng"]); if (m === "passport") warmTess(["eng"]);
   if (SC.stream) runLoop();
 }
 async function startCam() {
@@ -551,7 +652,10 @@ async function startCam() {
 function scErr(msg) { const e = $("#scErr"); e.textContent = msg; e.hidden = false; live("กล้องไม่พร้อม", "", 0); }
 function setupCaps() {
   const caps = SC.track && SC.track.getCapabilities ? SC.track.getCapabilities() : {};
-  if (caps.focusMode && caps.focusMode.includes("continuous")) SC.track.applyConstraints({advanced: [{focusMode: "continuous"}]}).catch(() => {});
+  const adv = [];
+  if (caps.focusMode && caps.focusMode.includes("continuous")) adv.push({focusMode: "continuous"});
+  if (caps.exposureMode && caps.exposureMode.includes("continuous")) adv.push({exposureMode: "continuous"});
+  if (adv.length) SC.track.applyConstraints({advanced: adv}).catch(() => {});
   $("#scTorch").hidden = !caps.torch;
   if (caps.zoom && caps.zoom.max > caps.zoom.min) {
     const z = $("#scZoom"); z.min = caps.zoom.min; z.max = Math.min(caps.zoom.max, 8); z.step = caps.zoom.step || 0.1;
@@ -574,18 +678,17 @@ function regionInVideo() {
   const vw = video.videoWidth, vh = video.videoHeight; if (!vw || !vh) return null;
   const r = video.getBoundingClientRect(), g = guide.getBoundingClientRect();
   const s = Math.max(r.width / vw, r.height / vh), ox = (r.width - vw * s) / 2, oy = (r.height - vh * s) / 2;
-  const pad = {plate: 0.12, id: 0.04, passport: 0.04, qr: 0.12}[SC.mode];
+  const pad = {plate: 0.1, id: 0.03, passport: 0.04, qr: 0.12}[SC.mode];
   let x = (g.left - r.left - ox) / s, y = (g.top - r.top - oy) / s, w = g.width / s, h = g.height / s;
   x -= w * pad; y -= h * pad; w *= 1 + pad * 2; h *= 1 + pad * 2;
   x = Math.max(0, x); y = Math.max(0, y); w = Math.min(vw - x, w); h = Math.min(vh - y, h);
   return {x, y, w, h};
 }
-const grabC = document.createElement("canvas");
 function grab(rect, maxW = 1600) {
-  const s = Math.min(1, maxW / rect.w);
-  grabC.width = Math.round(rect.w * s); grabC.height = Math.round(rect.h * s);
-  grabC.getContext("2d", {willReadFrequently: true}).drawImage(video, rect.x, rect.y, rect.w, rect.h, 0, 0, grabC.width, grabC.height);
-  const c = document.createElement("canvas"); c.width = grabC.width; c.height = grabC.height; c.getContext("2d").drawImage(grabC, 0, 0);
+  const s = Math.min(1, maxW / rect.w), c = document.createElement("canvas");
+  c.width = Math.round(rect.w * s); c.height = Math.round(rect.h * s);
+  const g = c.getContext("2d", {willReadFrequently: true}); g.imageSmoothingQuality = "high";
+  g.drawImage(video, rect.x, rect.y, rect.w, rect.h, 0, 0, c.width, c.height);
   return c;
 }
 async function qrFrom(canvas, both) {
@@ -594,93 +697,150 @@ async function qrFrom(canvas, both) {
   const r = jsQR(d.data, canvas.width, canvas.height, {inversionAttempts: both ? "attemptBoth" : "dontInvert"});
   return r ? r.data : null;
 }
+const frameMs = () => SC.ms.length ? Math.round(SC.ms.reduce((a, b) => a + b, 0) / SC.ms.length) : 0;
 async function runLoop() {
   const gen = ++SC.gen;
-  await sleep(200);
+  await sleep(150);
+  if (SC.mode !== "qr" && SC.mode !== "passport" && !Reader.ready()) {
+    live("กำลังโหลดตัวอ่าน…", "ครั้งแรกใช้เวลาไม่กี่วินาที", 0.02);
+    try { await Reader.load("models/"); } catch { live("โหลดตัวอ่านไม่สำเร็จ", "ตรวจอินเทอร์เน็ตแล้วเปิดใหม่", 0); return; }
+  }
   while (gen === SC.gen && SC.stream && !SC.locked) {
-    if (video.readyState < 2 || !video.videoWidth) { await sleep(120); continue; }
-    const rect = regionInVideo(); if (!rect) { await sleep(120); continue; }
+    if (video.readyState < 2 || !video.videoWidth) { await sleep(60); continue; }
+    const rect = regionInVideo(); if (!rect) { await sleep(60); continue; }
     try {
       if (SC.mode === "qr") {
         const t = await qrFrom(grab(rect, 900), SC.pass++ % 3 === 2);
         if (gen !== SC.gen) return;
         if (t) { lockQr(t); return; }
-        await sleep(70); continue;
+        await sleep(40); continue;
       }
-      const need = LANGS[SC.mode].filter(l => !SC.ready[l]);
-      if (need.length) live("กำลังเตรียมตัวอ่าน…", "ครั้งแรกใช้เวลาไม่กี่วินาที ครั้งต่อไปเปิดได้ทันที", 0.02);
-      const img = grab(rect), box = {x: 0, y: 0, w: img.width, h: img.height};
-      const r = SC.mode === "plate" ? await OCR.readPlate(img, box, SC.pass) : SC.mode === "id" ? await OCR.readIdCard(img, box, SC.pass) : await OCR.readPassport(img, box, SC.pass);
-      SC.pass++;
+      if (SC.mode === "plate") { plateStep(grab(rect, 640)); await sleep(0); continue; }
+      if (SC.mode === "id") { await idStep(grab(rect, 1000), gen); await sleep(0); continue; }
+      const pc = grab(rect), r = await OCR.readPassport(pc, {x: 0, y: 0, w: pc.width, h: pc.height}, SC.pass++);
       if (gen !== SC.gen) return;
-      if (SC.mode === "plate") votePlate(r); else if (SC.mode === "id") voteId(r); else votePassport(r);
-    } catch (e) { console.error(e); live("อ่านไม่สำเร็จ กำลังลองใหม่…", null, null); await sleep(400); }
+      if (r.passport) lockResult({kind: "passport", passport: r.passport, name: r.name || "", nat: r.nat || "", votes: 1});
+      else live("กำลังหาแถบ MRZ…", SUB.passport, 0.05);
+    } catch (e) { console.error(e); live("อ่านไม่สำเร็จ กำลังลองใหม่…", null, null); await sleep(300); }
   }
 }
-function votePlate(r) {
-  if (!r.plate) { live(SC.hist.length ? SC.hist[SC.hist.length - 1].plate : "กำลังหาป้าย…", SUB.plate, SC.hist.length ? null : 0.05); return; }
-  const k = normPlate(r.plate);
-  SC.hist.push({k, plate: r.plate, prov: r.prov}); if (SC.hist.length > 8) SC.hist.shift();
-  const same = SC.hist.filter(h => h.k === k), known = S.vehicles.some(v => normPlate(v.plate) === k) || S.inside.some(v => normPlate(v.plate) === k);
-  const need = known ? 2 : 3;
-  const provs = same.map(h => h.prov).filter(Boolean), prov = modeOf(provs);
-  live(`${r.plate}${prov ? "  " + prov : ""}`, `อ่านตรงกัน ${same.length}/${need} ครั้ง${prov ? "" : " · กำลังอ่านจังหวัด"}`, same.length / need);
-  if (same.length >= need) {
-    if (!prov && SC.provWait++ < 3) return;  // give the province a few more frames
-    lockResult({kind: "plate", plate: r.plate, prov: prov || "", votes: same.length});
+function plateHtml(st) {
+  // uncertain characters are underlined so the guard knows what to check
+  let i = 0;
+  return esc(st.display).replace(/[0-9ก-ฮ]/g, ch => { const u = st.unsure && st.unsure.includes(i); i++; return u ? `<u style="text-decoration-color:#f2c94c;text-decoration-thickness:3px">${ch}</u>` : ch; });
+}
+function plateStep(canvas) {
+  const f = Reader.readPlateFrame(canvas);
+  if (f && f.ms) { SC.ms.push(f.ms); if (SC.ms.length > 10) SC.ms.shift(); }
+  const st = SC.pf.add(f);
+  const elapsed = performance.now() - SC.t0;
+  if (!st.text) { live("กำลังหาป้าย…", `${SUB.plate}`, 0.04); return; }
+  const prov = st.regLock ? st.reg.prov : (st.provConf >= 0.35 ? st.prov : "");
+  live(plateHtml(st) + (prov ? `<span style="font-size:15px;font-weight:600;opacity:.85">  ${esc(prov)}</span>` : ""), st.regLock ? "ตรงกับรถที่ลงทะเบียน" : `อ่าน ${st.n} ภาพ · ${frameMs()} ms/ภาพ`, st.regLock || st.freeLock ? 1 : Math.min(0.9, st.minConf * Math.min(1, st.n / 2)), true);
+  if (st.regLock) { lockResult({kind: "plate", plate: Reader.display(normPlate(st.reg.plate), /^\d{6}$/.test(normPlate(st.reg.plate))), prov: st.reg.prov || st.prov, provConf: 1, reg: st.reg, votes: st.n, ms: elapsed}); return; }
+  if (st.freeLock) {
+    // wait a few more frames for the province if it is still unclear
+    if (st.provConf < 0.6 && st.n < 5 && elapsed < PLATE_GIVEUP_MS) return;
+    lockResult({kind: "plate", plate: st.display, prov: st.provConf >= 0.35 ? st.prov : "", provConf: st.provConf, votes: st.n, unsure: st.unsure, alts: st.alts, text: st.text, ms: elapsed}); return;
   }
+  if (elapsed > PLATE_GIVEUP_MS && st.n >= 3) lockResult({kind: "plate", plate: st.display, prov: st.provConf >= 0.35 ? st.prov : "", provConf: st.provConf, votes: st.n, unsure: st.unsure, alts: st.alts, text: st.text, weak: true, ms: elapsed});
 }
-function voteId(r) {
-  const v = SC.idv;
-  if (r.id) v.ids.push(r.id); if (r.en) v.en.push(r.en); if (r.th) v.th.push(r.th);
-  const top = modeOf(v.ids), n = top ? v.ids.filter(x => x === top).length : 0;
-  if (!top) { live("กำลังหาเลขบัตร 13 หลัก…", SUB.id, 0.05); return; }
-  const th = modeOf(v.th), en = modeOf(v.en);
-  live(`•••• ••••• ${top.slice(9, 11)} ${top[12]}`, (th || en) ? `ชื่อ: ${th || en}` : "เลขบัตรผ่านการตรวจ · กำลังอ่านชื่อ…", Math.min(1, n / 2 * 0.7 + ((th || en) ? 0.3 : 0)));
-  if (n >= 2 && (th || (en && SC.pass >= 3) || SC.pass >= 6)) lockResult({kind: "id", id: top, name: th || en || "", nameLang: th ? "th" : en ? "en" : "", votes: n});
+async function idStep(canvas, gen) {
+  const f = Reader.readIdFrame(canvas);
+  if (f && f.ms) { SC.ms.push(f.ms); if (SC.ms.length > 10) SC.ms.shift(); }
+  let st = SC.idf.add(f && f.found ? f : null);
+  if (f && f.found) SC.lastId = f;
+  // every few frames let Tesseract read the number too, as an independent vote
+  if (SC.pass++ % 4 === 3 && SC.ready.eng) {
+    const r = await OCR.readIdCard(canvas, {x: 0, y: 0, w: canvas.width, h: canvas.height}, 0).catch(() => ({}));
+    if (gen !== SC.gen) return;
+    if (r.id) st = SC.idf.add({text: r.id});
+  }
+  if (!st.n) { live("กำลังหาเลขบัตร 13 หลัก…", SUB.id, 0.05); return; }
+  const shown = st.id || st.partial;
+  live(`•••• ••••• ${shown.slice(9, 11)} ${shown[12]}`, st.id ? `เลขบัตรผ่านการตรวจเลข · อ่าน ${st.n} ภาพ` : `กำลังยืนยันเลขบัตร · อ่าน ${st.n} ภาพ`, st.lock ? 1 : Math.min(0.9, 0.3 + st.n * 0.2));
+  if (st.lock) lockResult({kind: "id", id: st.id, name: "", nameLang: "", votes: st.n, pendingName: true});
 }
-function votePassport(r) {
-  if (!r.passport) { live("กำลังหาแถบ MRZ…", SUB.passport, 0.05); return; }
-  lockResult({kind: "passport", passport: r.passport, name: r.name || "", nat: r.nat || "", votes: 1});
+async function readIdNames(f, gen) {
+  if (!f) return null;
+  const bands = Reader.idNameBands(f);
+  if (!bands.length) return null;
+  const rec = async (lang, c) => { const w = await OCR.worker(lang); await w.setParameters({tessedit_pageseg_mode: "7", tessedit_char_whitelist: "", preserve_interword_spaces: "1"}); return (await w.recognize(c)).data.text || ""; };
+  const tt = await rec("tha", bands[0]).catch(() => "");
+  if (gen !== SC.gen) return null;
+  const a = bands[1] ? await rec("eng", bands[1]).catch(() => "") : "", b = bands[2] ? await rec("eng", bands[2]).catch(() => "") : "";
+  const cap = s => s && s.replace(/[A-Za-z]+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase()).replace(/^(Mr|Mrs|Ms)\. /, "$1. ");
+  return {th: Reader.parseThName(tt), en: cap(Reader.parseEnName(a, b))};
 }
 function lockResult(res) {
-  SC.locked = res; SC.gen++;
+  SC.locked = res; const gen = ++SC.gen;
   guide.classList.add("locked"); beep();
   $("#scRead").hidden = true; $("#modes").hidden = true;
   const p = $("#lockPanel");
-  let body = "", hits = [];
-  if (res.kind === "plate") {
-    hits = findInsideBy(res.plate, res.prov, "");
-    body = `<div class="t">อ่านป้ายได้แล้ว</div><div style="display:flex;justify-content:center">${plateHTML(res.plate, res.prov || "จังหวัด ?")}</div>`;
-  } else {
-    const last4 = res.kind === "id" ? res.id.slice(-4) : res.passport.slice(-4);
-    hits = res.name ? findInsideBy("", "", res.name) : [];
-    body = `<div class="t">อ่าน${res.kind === "id" ? "บัตร" : "พาสปอร์ต"}ได้แล้ว</div><dl class="kv"><dt>ชื่อ</dt><dd>${esc(res.name || "อ่านชื่อไม่ได้ กรอกเองได้")}</dd><dt>เลขท้าย</dt><dd>${esc(last4)}${res.nat ? " · " + esc(res.nat) : ""}</dd></dl>`;
-  }
-  if (hits.length) body += `<div class="warnline">อยู่ในพื้นที่ตั้งแต่ ${tOf(hits[0].inAt)} น. (${dur(hits[0].inAt)})${hits[0].company ? " · " + esc(hits[0].company) : ""}</div>`;
-  const btns = [];
-  if (hits.length) btns.push(`<button type="button" class="danger" data-lk="exit">บันทึกออกเลย</button>`);
-  if (res.kind === "plate" && !hits.length) btns.push(`<button type="button" class="primary" data-lk="next">ใช้ค่านี้ แล้วสแกนบัตรต่อ</button>`);
-  btns.push(`<button type="button" class="${hits.length || res.kind !== "plate" ? "primary" : "ghost"}" data-lk="use">ใช้ค่านี้</button>`);
-  btns.push(`<button type="button" class="ghost" data-lk="again">อ่านใหม่</button>`);
-  p.innerHTML = body + `<div class="btnrow">${btns.join("")}</div>`;
-  p.hidden = false;
-  p.querySelectorAll("[data-lk]").forEach(b => b.onclick = async () => {
-    const a = b.dataset.lk;
-    if (a === "again") { setMode(SC.mode); return; }
-    if (a === "exit") {
-      b.disabled = true;
-      try { await recordExit(hits[0]); closeScanner(); clearForm(); toast(`บันทึกออกแล้ว ${hits[0].plate ? parsePlate(hits[0].plate).display : hits[0].name}`); }
-      catch { b.disabled = false; toast("บันทึกออกไม่สำเร็จ"); }
-      return;
+  const render = () => {
+    let body = "", hits = [];
+    if (res.kind === "plate") {
+      hits = findInsideBy(res.plate, res.prov, "");
+      const title = res.reg ? `ตรงกับรถ${res.reg.from === "registry" ? "ที่ลงทะเบียน" : "ที่เคยเข้า"}` : res.weak ? "อ่านได้ไม่ชัด ตรวจก่อนใช้" : "อ่านป้ายได้แล้ว";
+      body = `<div class="t">${title} <small style="font-weight:400;color:#5a6e76;margin-left:auto">${(res.ms / 1000).toFixed(1)} วินาที</small></div><div style="display:flex;justify-content:center">${plateHTML(res.plate, res.prov || "จังหวัด ?")}</div>`;
+      if (res.reg && (res.reg.company || res.reg.driver)) body += `<dl class="kv"><dt>บริษัท</dt><dd>${esc(res.reg.company || "–")}</dd>${res.reg.driver ? `<dt>คนขับ</dt><dd>${esc(res.reg.driver)}</dd>` : ""}</dl>`;
+      const checks = (res.unsure || []).map(i => res.text && res.text[i] ? `ตัว "${res.text[i]}"${res.alts && res.alts[i] ? ` (อาจเป็น "${res.alts[i]}")` : ""}` : "").filter(Boolean);
+      if (checks.length) body += `<div class="warnline">ตรวจ${checks.join(" และ ")} กับป้ายจริง${res.weak ? " · แก้ได้หลังกด ใช้ค่านี้" : ""}</div>`;
+      else if (res.weak) body += `<div class="warnline">อ่านได้ไม่ชัด กด "ใช้ค่านี้" แล้วแก้ในช่องทะเบียนได้</div>`;
+      if (!res.reg && res.prov && res.provConf != null && res.provConf < 0.6) body += `<div class="warnline">จังหวัด "${esc(res.prov)}" ยังไม่แน่ใจ ตรวจกับป้าย</div>`;
+    } else {
+      const last4 = res.kind === "id" ? res.id.slice(-4) : res.passport.slice(-4);
+      hits = res.name ? findInsideBy("", "", res.name) : [];
+      body = `<div class="t">${res.nameLang === "known" ? "ผู้มาติดต่อเคยมาแล้ว" : `อ่าน${res.kind === "id" ? "บัตร" : "พาสปอร์ต"}ได้แล้ว`}</div><dl class="kv"><dt>ชื่อ</dt><dd>${res.pendingName ? '<span class="spin" style="border-color:#d5e0dc;border-top-color:#08795a"></span>กำลังอ่านชื่อ…' : esc(res.name || "อ่านชื่อไม่ได้ กรอกเองได้")}${res.nameEn ? `<br><small>${esc(res.nameEn)}</small>` : ""}</dd><dt>เลขท้าย</dt><dd>${esc(last4)}${res.nat ? " · " + esc(res.nat) : ""}</dd>${res.company ? `<dt>บริษัท</dt><dd>${esc(res.company)}</dd>` : ""}</dl>${res.kind === "id" && res.nameLang !== "known" && !res.pendingName ? '<div class="warnline" style="background:#e3f2ec;color:#08795a">ตรวจชื่อกับบัตรจริง ครั้งหน้าบัตรใบนี้จะขึ้นชื่อที่ยืนยันแล้วทันที</div>' : ""}`;
     }
-    applyLock(res);
-    if (a === "next") setMode("id"); else closeScanner();
-  });
+    if (hits.length) body += `<div class="warnline">อยู่ในพื้นที่ตั้งแต่ ${tOf(hits[0].inAt)} น. (${dur(hits[0].inAt)})${hits[0].company ? " · " + esc(hits[0].company) : ""}</div>`;
+    const btns = [];
+    if (hits.length) btns.push(`<button type="button" class="danger" data-lk="exit">บันทึกออกเลย</button>`);
+    if (res.kind === "plate" && !hits.length) btns.push(`<button type="button" class="primary" data-lk="next">ใช้ค่านี้ แล้วสแกนบัตรต่อ</button>`);
+    btns.push(`<button type="button" class="${hits.length || res.kind !== "plate" ? "primary" : "ghost"}" data-lk="use">ใช้ค่านี้</button>`);
+    btns.push(`<button type="button" class="ghost" data-lk="again">อ่านใหม่</button>`);
+    p.innerHTML = body + `<div class="btnrow">${btns.join("")}</div>`;
+    p.hidden = false;
+    p.querySelectorAll("[data-lk]").forEach(b => b.onclick = async () => {
+      const a = b.dataset.lk;
+      if (a === "again") { setMode(SC.mode); return; }
+      if (a === "exit") {
+        b.disabled = true;
+        try { await recordExit(hits[0]); closeScanner(); clearForm(); toast(`บันทึกออกแล้ว ${hits[0].plate ? parsePlate(hits[0].plate).display : hits[0].name}`); }
+        catch { b.disabled = false; toast("บันทึกออกไม่สำเร็จ"); }
+        return;
+      }
+      res.pendingName = false; applyLock(res);
+      if (a === "next") setMode("id"); else closeScanner();
+    });
+  };
+  render();
+  if (res.kind === "id" && res.pendingName) {
+    (async () => {
+      res.hash = await idHash(res.id);
+      const known = res.hash && S.people.find(p => p.idHash === res.hash);
+      if (known && gen === SC.gen && SC.locked === res) { res.pendingName = false; res.name = known.name; res.nameLang = "known"; res.company = known.company; render(); return; }
+      const reads = [];
+      for (let k = 0; k < 3 && gen === SC.gen; k++) {
+        let f = SC.lastId;
+        if (k > 0 && SC.stream) { const rect = regionInVideo(); const g2 = rect && Reader.readIdFrame(grab(rect, 1000)); if (g2 && g2.found) f = g2; }
+        const n = await readIdNames(f, gen).catch(() => null);
+        if (n) reads.push(n);
+        const ths = reads.map(r => r.th).filter(Boolean);
+        if (ths.length >= 2 && ths.some((t, i) => ths.indexOf(t) !== i)) break;   // same Thai name twice: done
+        if (k === 1 && ths.length === 0 && reads.some(r => r.en)) break;
+      }
+      if (gen !== SC.gen || SC.locked !== res) return;
+      const pickMode = arr => { const c = {}; let b = null; for (const x of arr) { c[x] = (c[x] || 0) + 1; if (!b || c[x] > c[b]) b = x; } return b; };
+      const th = pickMode(reads.map(r => r.th).filter(Boolean)), en = pickMode(reads.map(r => r.en).filter(Boolean));
+      res.pendingName = false; res.name = th || en || ""; res.nameLang = th ? "th" : en ? "en" : ""; res.nameEn = th && en ? en : "";
+      render();
+    })();
+  }
 }
 function applyLock(res) {
-  if (res.kind === "plate") applyPlate(res);
-  else if (res.kind === "id") applyPersonLock({name: res.name, nameLang: res.nameLang, doc: "บัตรประชาชน", last4: res.id.slice(-4), votes: res.votes});
+  if (res.kind === "plate") applyPlate({plate: res.plate, prov: res.prov, provConf: res.provConf, reg: res.reg, votes: res.votes, unsure: res.unsure});
+  else if (res.kind === "id") { S.idHash = res.hash || ""; applyPersonLock({name: res.name, nameLang: res.nameLang, doc: "บัตรประชาชน", last4: res.id.slice(-4), votes: res.votes, company: res.company}); }
   else applyPersonLock({name: res.name, nameLang: "en", doc: "พาสปอร์ต", last4: res.passport.slice(-4), votes: 1});
 }
 function lockQr(text) { beep(); guide.classList.add("locked"); setTimeout(() => { closeScanner(); handleQrText(text); }, 250); }
@@ -694,34 +854,44 @@ async function loadBitmap(file) {
   if (window.createImageBitmap) { try { return await createImageBitmap(file, {imageOrientation: "from-image"}); } catch {} }
   const url = URL.createObjectURL(file); const img = new Image(); img.src = url; await img.decode(); return img;
 }
+function sub(c, x, y, w, h, maxW) {
+  const s = Math.min(1, maxW / w), o = document.createElement("canvas"); o.width = Math.round(w * s); o.height = Math.round(h * s);
+  const g = o.getContext("2d"); g.imageSmoothingQuality = "high"; g.drawImage(c, x, y, w, h, 0, 0, o.width, o.height); return o;
+}
 $("#photoFile").addEventListener("change", async e => {
   const f = e.target.files && e.target.files[0]; if (!f) return;
   scanSummary("กำลังอ่านรูป…", [["", "ใช้เวลาไม่กี่วินาที"]]);
   try {
     const bmp = await loadBitmap(f), s = Math.min(1, 1800 / Math.max(bmp.width, bmp.height));
     const c = document.createElement("canvas"); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s); c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-    const box = {x: 0, y: 0, w: c.width, h: c.height};
     if (photoKind === "qr") { const t = await qrFrom(c, true); if (t) handleQrText(t); else scanSummary("ไม่พบ QR ในรูป", [["w", "ให้ QR อยู่กลางภาพ ไม่เอียง"]]); return; }
-    const found = [];
-    for (let pass = 0; pass < 4; pass++) {
-      const r = photoKind === "plate" ? await OCR.readPlate(c, box, pass) : photoKind === "id" ? await OCR.readIdCard(c, box, pass) : await OCR.readPassport(c, box, pass);
-      found.push(r);
-      if (photoKind === "passport" && r.passport) break;
+    if (photoKind === "passport") {
+      let r = null; for (let pass = 0; pass < 3 && !(r && r.passport); pass++) r = await OCR.readPassport(c, {x: 0, y: 0, w: c.width, h: c.height}, pass);
+      if (!r || !r.passport) { scanSummary("อ่าน MRZ จากรูปไม่ได้", [["w", "ถ่ายให้แถบตัวอักษร 2 บรรทัดล่างชัด หรือกรอกเอง"]]); return; }
+      applyPersonLock({name: r.name || "", nameLang: "en", doc: "พาสปอร์ต", last4: r.passport.slice(-4), votes: 1, src: "photo"}); return;
     }
+    await Reader.load("models/");
+    const W = c.width, H = c.height;
+    // a photo is one frame: read it at several crops/zooms and fuse them like video frames
+    const crops = [[0, 0, W, H], [W * .1, H * .1, W * .8, H * .8], [W * .2, H * .25, W * .6, H * .5], [W * .05, H * .2, W * .9, H * .6]];
     if (photoKind === "plate") {
-      const plates = found.map(r => r.plate).filter(Boolean);
-      if (!plates.length) { scanSummary("อ่านป้ายจากรูปไม่ได้", [["w", "ถ่ายใกล้ขึ้นให้ป้ายเต็มภาพ หรือกรอกเอง"]]); return; }
-      const plate = modeOf(plates), prov = modeOf(found.filter(r => r.plate === plate).map(r => r.prov).filter(Boolean)) || "";
-      applyPlate({plate, prov, votes: 1, src: "photo"});
-    } else if (photoKind === "id") {
-      const id = modeOf(found.map(r => r.id).filter(Boolean));
-      if (!id) { scanSummary("อ่านเลขบัตรจากรูปไม่ได้", [["w", "ถ่ายตรง ๆ ให้บัตรเต็มภาพ ไม่มีแสงสะท้อน หรือกรอกเอง"]]); return; }
-      const th = modeOf(found.map(r => r.th).filter(Boolean)), en = modeOf(found.map(r => r.en).filter(Boolean));
-      applyPersonLock({name: th || en || "", nameLang: th ? "th" : "en", doc: "บัตรประชาชน", last4: id.slice(-4), votes: 1, src: "photo"});
+      const pf = new Reader.PlateFusion(knownPlates()); let st = null;
+      for (const [x, y, w, h] of crops) st = pf.add(Reader.readPlateFrame(sub(c, x, y, w, h, 640)));
+      if (!st || !st.text) { scanSummary("อ่านป้ายจากรูปไม่ได้", [["w", "ถ่ายใกล้ขึ้นให้ป้ายเต็มภาพ หรือกรอกเอง"]]); return; }
+      if (st.regLock) applyPlate({plate: Reader.display(normPlate(st.reg.plate), /^\d{6}$/.test(normPlate(st.reg.plate))), prov: st.reg.prov || st.prov, provConf: 1, reg: st.reg, votes: 1, src: "photo"});
+      else applyPlate({plate: st.display, prov: st.provConf >= 0.35 ? st.prov : "", provConf: st.provConf, votes: 1, unsure: st.unsure, src: "photo"});
     } else {
-      const r = found.find(x => x.passport);
-      if (!r) { scanSummary("อ่าน MRZ จากรูปไม่ได้", [["w", "ถ่ายให้แถบตัวอักษร 2 บรรทัดล่างชัด หรือกรอกเอง"]]); return; }
-      applyPersonLock({name: r.name || "", nameLang: "en", doc: "พาสปอร์ต", last4: r.passport.slice(-4), votes: 1, src: "photo"});
+      const idf = new Reader.IdFusion(); let st = null, last = null;
+      for (const [x, y, w, h] of crops) { const fr = Reader.readIdFrame(sub(c, x, y, w, h, 1000)); if (fr && fr.found) last = fr; st = idf.add(fr && fr.found ? fr : null); }
+      if (!st || !st.id) {
+        const r = await OCR.readIdCard(c, {x: 0, y: 0, w: W, h: H}, 0); if (r.id) { st = idf.add({text: r.id}); }
+      }
+      if (!st || !st.id) { scanSummary("อ่านเลขบัตรจากรูปไม่ได้", [["w", "ถ่ายตรง ๆ ให้บัตรเต็มภาพ ไม่มีแสงสะท้อน หรือกรอกเอง"]]); return; }
+      S.idHash = await idHash(st.id);
+      const known = S.idHash && S.people.find(p => p.idHash === S.idHash);
+      if (known) { applyPersonLock({name: known.name, nameLang: "known", company: known.company, doc: "บัตรประชาชน", last4: st.id.slice(-4), votes: 1, src: "photo"}); return; }
+      const n = last ? await readIdNames(last, SC.gen).catch(() => null) : null;
+      applyPersonLock({name: (n && (n.th || n.en)) || "", nameLang: n && n.th ? "th" : "en", doc: "บัตรประชาชน", last4: st.id.slice(-4), votes: 1, src: "photo"});
     }
   } catch (err) { console.error(err); scanSummary("อ่านรูปไม่สำเร็จ", [["x", "ลองถ่ายใหม่ หรือกรอกเอง"]]); }
 });
@@ -730,20 +900,20 @@ $("#photoFile").addEventListener("change", async e => {
 async function countToday() { try { S.todayCount = (await DB.byIndex("visits", "day", S.todayKey)).length; } catch {} renderBadge(); }
 async function loadAll() {
   S.inside = (await DB.byIndex("visits", "status", "in")).sort((a, b) => b.inAt.localeCompare(a.inAt));
-  S.vehicles = await DB.all("vehicles"); S.people = await DB.all("people");
+  S.vehicles = await DB.all("vehicles"); S.people = await DB.all("people"); S.registry = await DB.all("registry");
   const st = await DB.get("meta", "settings");
   S.settings = {companies: (st && st.companies) || [], purposes: (st && st.purposes && st.purposes.length) ? st.purposes : DEFAULT_PURPOSES};
   await countToday();
-  renderPurposes(); fillCompanyList(); renderSettings(); renderInside(); renderInsideHit();
+  renderPurposes(); fillCompanyList(); renderSettings(); renderInside(); renderInsideHit(); renderRegistry();
 }
 (async () => {
   tick(); renderPurposes(); renderPlatePreview(); renderInside();
   if (!window.indexedDB) { banner("เบราว์เซอร์นี้เก็บข้อมูลไม่ได้", " เปิดด้วย Chrome หรือ Safari และไม่ใช้โหมดไม่ระบุตัวตน"); return; }
-  try { await loadAll(); await loadSync(); flushSync(); }
+  try { await loadAll(); await loadSync(); flushSync(); pullRegistry(false); }
   catch (e) { console.error(e); banner("เปิดฐานข้อมูลในเครื่องไม่ได้", " ปิดโหมดไม่ระบุตัวตน แล้วโหลดหน้าใหม่"); }
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
   if (location.protocol === "file:") banner("เปิดจากไฟล์ในเครื่อง", " กล้องสดอาจใช้ไม่ได้ ให้เปิดผ่านลิงก์ https (ดูวิธีในไฟล์ README)");
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
-  setTimeout(() => warm("plate"), 2500);
+  setTimeout(() => Reader.load("models/").catch(() => {}), 1200);
   if (/^#(scan|inside|report|more)$/.test(location.hash)) show(location.hash.slice(1));
 })();

@@ -8,8 +8,14 @@
  *    - ผู้ที่มีสิทธิ์เข้าถึง: ทุกคน (Anyone)
  * 4) คัดลอกลิงก์ที่ลงท้ายด้วย /exec ไปวางในแอป: แท็บ QR/ตั้งค่า > ส่งข้อมูลขึ้น Google Sheets
  * ทุกรายการมีรหัส (id) ไม่ซ้ำ ส่งซ้ำได้โดยไม่เกิดแถวซ้ำ ตอนบันทึกออกจะอัปเดตแถวเดิม
+ *
+ * รถที่ลงทะเบียน (หลังบ้าน): ใส่ในแท็บ "Registered" (สร้างให้อัตโนมัติ) คอลัมน์ ทะเบียน | จังหวัด | บริษัท | คนขับ | หมายเหตุ
+ * แอปทุกเครื่องดึงรายการนี้ทุก 10 นาที รถที่อยู่ในรายการจะสแกนล็อกได้ทันที
+ * อัปเดตโค้ดจากเวอร์ชันเก่า: วางโค้ดใหม่ > Deploy > Manage deployments > แก้ไข (ดินสอ) > Version: New version > Deploy
  */
 const SHEET_NAME = "Visits";
+const REG_SHEET = "Registered";
+const REG_HEAD = ["ทะเบียน", "จังหวัด", "บริษัท", "คนขับ", "หมายเหตุ"];
 const HEAD = ["id", "วันที่", "เวลาเข้า", "เวลาออก", "สถานะ", "ทะเบียน", "จังหวัด", "ชื่อ", "เอกสาร", "เลขท้าย",
   "บริษัท", "จำนวนคน", "วัตถุประสงค์", "หมายเหตุ", "จุดตรวจเข้า", "จุดตรวจออก", "ที่มาข้อมูล", "inAt (ISO)", "outAt (ISO)", "อัปเดตล่าสุด"];
 
@@ -38,7 +44,23 @@ function doPost(e) {
   }
 }
 
-function doGet() { return out({ok: true, message: "OIL-TEX Yard sync is running"}); }
+function doGet(e) {
+  if (e && e.parameter && e.parameter.action === "registry") {
+    const sh = regSheet_(), n = Math.max(sh.getLastRow() - 1, 0);
+    const rows = n ? sh.getRange(2, 1, n, REG_HEAD.length).getDisplayValues()
+      .filter(r => String(r[0]).trim())
+      .map(r => ({plate: r[0], prov: r[1], company: r[2], driver: r[3], note: r[4]})) : [];
+    return out({ok: true, rows: rows});
+  }
+  return out({ok: true, message: "OIL-TEX Yard sync is running"});
+}
+
+function regSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(REG_SHEET);
+  if (!sh) { sh = ss.insertSheet(REG_SHEET); sh.appendRow(REG_HEAD); sh.setFrozenRows(1); sh.getRange(1, 1, 1, REG_HEAD.length).setFontWeight("bold"); sh.getRange("A:A").setNumberFormat("@"); }
+  return sh;
+}
 
 function sheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();

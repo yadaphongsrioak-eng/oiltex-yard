@@ -185,6 +185,8 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 .linkline code{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px;background:var(--surface-2);padding:10px;border-radius:8px;border:1px solid var(--line)}
 .btnrow{display:flex;gap:8px;flex-wrap:wrap}
 .btnrow>*{flex:1 1 140px}
+.regrow{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.regrow .who{min-width:0}.regrow .who b{display:block;font-size:15px}.regrow .who span{display:block;font-size:13px;color:var(--muted)}
 
 #toast{position:fixed;left:50%;bottom:calc(var(--tabh) + 16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:80;background:var(--ink);color:var(--surface);padding:12px 18px;border-radius:12px;font-size:15px;max-width:calc(100% - 32px);box-shadow:var(--shadow)}
 
@@ -193,13 +195,13 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 .scanner video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .guide{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);border-radius:12px;box-shadow:0 0 0 200vmax rgba(0,0,0,.55);transition:border-color .2s,width .25s,height .25s}
 .guide::after{content:"";position:absolute;inset:0;border:3px solid rgba(255,255,255,.9);border-radius:12px}
-.guide.plate{width:min(80vw,560px);aspect-ratio:2.2/1}
-.guide.id{width:min(90vw,640px);aspect-ratio:1.586/1}
-.guide.passport{width:min(90vw,640px);aspect-ratio:1.42/1}
-.guide.qr{width:min(64vw,360px);aspect-ratio:1/1}
+.guide.m-plate{width:min(80vw,560px);aspect-ratio:2.2/1}
+.guide.m-id{width:min(90vw,640px);aspect-ratio:1.586/1}
+.guide.m-passport{width:min(90vw,640px);aspect-ratio:1.42/1}
+.guide.m-qr{width:min(64vw,360px);aspect-ratio:1/1}
 .guide.locked::after{border-color:#3ddc97;border-width:5px}
 .guide .mrz{position:absolute;left:4%;right:4%;bottom:5%;height:28%;border:2px dashed rgba(255,255,255,.7);border-radius:6px;display:none}
-.guide.passport .mrz{display:block}
+.guide.m-passport .mrz{display:block}
 .guide .scanline{position:absolute;left:6%;right:6%;height:2px;background:linear-gradient(90deg,transparent,#3ddc97,transparent);top:10%;animation:scan 1.8s ease-in-out infinite alternate;opacity:.9}
 .guide.locked .scanline{display:none}
 @keyframes scan{to{top:88%}}
@@ -353,6 +355,18 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
   </div>
 
   <div class="panel">
+    <h2>รถที่ลงทะเบียน (หลังบ้าน)</h2>
+    <p id="regInfo">ยังไม่มีรายการ</p>
+    <p>วางรายการจาก Excel ได้เลย หนึ่งคันต่อแถว: ทะเบียน · จังหวัด · บริษัท · คนขับ (คนขับไม่บังคับ)</p>
+    <label for="regPaste">วางรายการรถ<textarea id="regPaste" placeholder="70-1234&#9;ระยอง&#9;บริษัท ตัวอย่าง จำกัด&#10;1กข 1234&#9;ชลบุรี&#9;บริษัท ขนส่ง จำกัด"></textarea></label>
+    <div class="btnrow"><button type="button" class="primary sm" id="btnRegAdd">เพิ่มเข้ารายการ</button><button type="button" class="navybtn sm" id="btnRegPull">ดึงจาก Google Sheets</button></div>
+    <p id="regPullInfo">ถ้าตั้งค่า Google Sheets ไว้ ระบบดึงรายการจากแท็บ Registered ให้เองทุก 10 นาที</p>
+    <label for="regQ">ค้นหาในรายการ<input id="regQ" type="search" placeholder="ทะเบียน หรือบริษัท" autocomplete="off"></label>
+    <div class="list" id="regList"></div>
+    <div class="btnrow"><button type="button" class="ghost sm" id="btnRegCsv">ส่งออกรายการ (CSV)</button><button type="button" class="danger sm" id="btnRegClear">ล้างรายการ</button></div>
+  </div>
+
+  <div class="panel">
     <h2>รายชื่อตัวเลือก</h2>
     <p>หนึ่งรายการต่อบรรทัด ใช้เป็นตัวเลือกให้ รปภ. กดได้เลย</p>
     <label for="setCo">บริษัทผู้เช่า / ผู้รับเหมา<textarea id="setCo" placeholder="บริษัท ตัวอย่าง จำกัด"></textarea></label>
@@ -380,7 +394,7 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
   <div class="panel">
     <h2>วิธีใช้ที่จุด รปภ.</h2>
     <ol class="steps">
-      <li>กด <b>สแกนป้ายทะเบียน</b> ส่องกล้องค้างไว้ ระบบล็อกค่าเองเมื่ออ่านตรงกัน แล้วกด <b>สแกนบัตรต่อ</b></li>
+      <li>กด <b>สแกนป้ายทะเบียน</b> ส่องกล้องค้างไว้ รถที่ลงทะเบียนไว้ล็อกได้ใน 1–2 วินาที แล้วกด <b>สแกนบัตรต่อ</b></li>
       <li>เทียบกับป้ายและบัตรจริง แก้ช่องที่ขึ้นสีเหลือง เลือกบริษัทและวัตถุประสงค์</li>
       <li>กด <b>อนุญาตและบันทึกเข้า</b> ให้ผู้มาติดต่อถ่ายรูป QR บัตรผ่านเก็บไว้</li>
       <li>ตอนออก สแกน QR บัตรผ่าน หรือสแกนป้ายเดิม แล้วกด <b>บันทึกออก</b></li>
@@ -399,7 +413,7 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 <!-- live scanner -->
 <div id="scanner" class="scanner" hidden role="dialog" aria-modal="true" aria-label="สแกนด้วยกล้อง">
   <video id="cam" playsinline muted autoplay></video>
-  <div id="guide" class="guide plate"><div class="mrz"></div><div class="scanline"></div></div>
+  <div id="guide" class="guide m-plate"><div class="mrz"></div><div class="scanline"></div></div>
   <div class="sc-top">
     <button type="button" class="scbtn" id="scClose" aria-label="ปิดกล้อง">ปิด</button>
     <div class="hint" id="scHint">วางป้ายให้อยู่ในกรอบ</div>
@@ -466,6 +480,7 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 <script src="vendor/jsQR.js"></script>
 <script src="vendor/qrcode.js"></script>
 <script src="ocr.js"></script>
+<script src="reader.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
